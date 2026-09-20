@@ -92,18 +92,22 @@ export class BleTransport implements Transport {
     const characteristic = this.#write
     if (!characteristic) throw new Error('not connected')
 
+    // Copy into a buffer the DOM types accept. A block is at most 173 bytes, so
+    // the copy costs nothing worth measuring.
+    const bytes = new Uint8Array(block)
+
     // Writing without a response is faster and is what the amp expects, but
     // Chrome enforces its own queue depth on it and can reject a burst. Falling
     // back to an acknowledged write costs latency and keeps the block.
     if (characteristic.properties.writeWithoutResponse) {
       try {
-        await characteristic.writeValueWithoutResponse(block)
+        await characteristic.writeValueWithoutResponse(bytes)
         return
       } catch {
         // fall through
       }
     }
-    await characteristic.writeValue(block)
+    await characteristic.writeValue(bytes)
   }
 
   listen(listener: TransportListener): () => void {
