@@ -1,6 +1,16 @@
 import { memo } from 'react'
-import { CATALOG, AMP_SLOT, knobLabel, slotSpec, GUITAR_AMPS, BASS_AMPS } from '../protocol/catalog.js'
+import {
+  AMP_SLOT,
+  BASS_AMPS,
+  CATALOG,
+  GUITAR_AMPS,
+  knobIsNamed,
+  knobLabel,
+  slotSpec,
+} from '../protocol/catalog.js'
+import { REVERB_ROOMS, REVERB_TYPE_INDEX, labelSourceFor, reverbRoomFor } from '../protocol/knobs.js'
 import type { PedalState } from '../protocol/preset.js'
+import { Knob } from './Knob.js'
 
 interface Props {
   slot: number
@@ -13,15 +23,17 @@ interface Props {
 /**
  * One link in the chain.
  *
- * Parameter values travel as floats from 0 to 1 but are shown from 0 to 10,
- * which is what the amp's own knobs are marked with and what the official app
- * displays. The conversion lives here and nowhere else.
+ * Parameter values travel as floats from 0 to 1 and are shown from 0 to 10,
+ * which is how the amp's own knobs are marked. The conversion lives in
+ * {@link Knob} and nowhere else.
  */
 export const SlotCard = memo(function SlotCard({ slot, pedal, onToggle, onSwap, onParam }: Props) {
   const spec = slotSpec(slot)
   const isAmp = slot === AMP_SLOT
+  const isReverb = pedal.name === 'bias.reverb'
   const models = CATALOG[slot] ?? {}
   const known = pedal.name in models
+  const labels = labelSourceFor(pedal.name)
 
   return (
     <section className={`slot${pedal.on ? '' : ' bypassed'}${isAmp ? ' amp' : ''}`}>
@@ -71,22 +83,48 @@ export const SlotCard = memo(function SlotCard({ slot, pedal, onToggle, onSwap, 
         )}
       </select>
 
-      {pedal.params.map((value, index) => (
-        <div className="knob" key={index}>
-          <div className="knob-row">
-            <span className="label">{knobLabel(slot, pedal.name, index)}</span>
-            <span className="value">{(value * 10).toFixed(1)}</span>
-          </div>
-          <input
-            type="range"
-            min={0}
-            max={1000}
-            value={Math.round(value * 1000)}
-            aria-label={`${pedal.name} ${knobLabel(slot, pedal.name, index)}`}
-            onChange={(event) => onParam(slot, index, Number(event.target.value) / 1000)}
-          />
-        </div>
-      ))}
+      {/* The reverb room is a float in one parameter rather than a model swap,
+          so it gets a picker instead of a knob nobody could aim. */}
+      {isReverb && pedal.params.length > REVERB_TYPE_INDEX && (
+        <select
+          className="room"
+          aria-label="Reverb room"
+          value={String(reverbRoomFor(pedal.params[REVERB_TYPE_INDEX] as number)?.value ?? '')}
+          onChange={(event) => onParam(slot, REVERB_TYPE_INDEX, Number(event.target.value))}
+        >
+          {reverbRoomFor(pedal.params[REVERB_TYPE_INDEX] as number) === null && (
+            <option value="">
+              {(pedal.params[REVERB_TYPE_INDEX] as number).toFixed(3)} (between rooms)
+            </option>
+          )}
+          {REVERB_ROOMS.map((room) => (
+            <option key={room.value} value={String(room.value)}>
+              {room.name}
+              {room.alternative ? ` · ${room.alternative}` : ''}
+            </option>
+          ))}
+        </select>
+      )}
+
+      {/* Knobs stay live on a bypassed slot. You dial an effect in before you
+          switch it on, and the amp accepts the change either way — greying them
+          out would be tidy and would get in your way. */}
+      <div className="knobs">
+        {pedal.params.map((value, index) => {
+          if (isReverb && index === REVERB_TYPE_INDEX) return null
+          return (
+            <Knob
+              key={index}
+              label={knobLabel(slot, pedal.name, index)}
+              named={knobIsNamed(slot, pedal.name, index)}
+              value={value}
+              onChange={(next) => onParam(slot, index, next)}
+            />
+          )
+        })}
+      </div>
+
+      {labels?.note && <p className="slot-note">{labels.note}</p>}
     </section>
   )
 })

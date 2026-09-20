@@ -24,53 +24,65 @@ import { LIVE_CHANNEL } from '../protocol/catalog.js'
 import { parsePreset, serializePreset, newUuid, type Preset } from '../protocol/preset.js'
 import { Listeners, type Transport, type TransportInfo, type TransportListener } from './types.js'
 
+/**
+ * Four presets to answer with.
+ *
+ * The parameter counts are the ones a real Spark 40 reports, measured from the
+ * capture in `test/fixtures/`: one on `Booster`, two on `Compressor`, `Phaser`
+ * and `Cloner`, three on the noise gate and `DistortionTS9`, four on
+ * `ChorusAnalog`, five on `DelayMono` and every amp, eight on `bias.reverb`.
+ *
+ * Getting these right matters more than it looks. A mock with invented counts
+ * lets the interface be built against knobs that do not exist, and the mistake
+ * only surfaces when an amp is plugged in.
+ */
 const FACTORY: Array<Pick<Preset, 'name' | 'pedals'>> = [
   {
     name: 'Clean Start',
     pedals: [
-      { name: 'bias.noisegate', on: true, params: [0.15, 0.3] },
-      { name: 'LA2AComp', on: false, params: [0.4, 0.5] },
-      { name: 'Booster', on: false, params: [0.3, 0.5, 0.5] },
+      { name: 'bias.noisegate', on: true, params: [0.15, 0.3, 0] },
+      { name: 'LA2AComp', on: false, params: [0, 0.4, 0.5] },
+      { name: 'Booster', on: false, params: [0.3] },
       { name: 'RolandJC120', on: true, params: [0.35, 0.6, 0.5, 0.55, 0.6] },
       { name: 'ChorusAnalog', on: true, params: [0.35, 0.4, 0.5, 0.5] },
       { name: 'DelayMono', on: false, params: [0.2, 0.3, 0.25, 0.5, 0.3] },
-      { name: 'bias.reverb', on: true, params: [0.3, 0.5, 0.4, 0.5, 0.5, 0.5, 0.125] },
+      { name: 'bias.reverb', on: true, params: [0.3, 0.5, 0.4, 0.5, 0.5, 0.5, 0.1, 1] },
     ],
   },
   {
     name: 'Crunch',
     pedals: [
-      { name: 'bias.noisegate', on: true, params: [0.25, 0.35] },
+      { name: 'bias.noisegate', on: true, params: [0.25, 0.35, 0] },
       { name: 'Compressor', on: true, params: [0.5, 0.45] },
       { name: 'DistortionTS9', on: true, params: [0.45, 0.55, 0.5] },
       { name: 'Plexi', on: true, params: [0.6, 0.55, 0.5, 0.45, 0.6] },
-      { name: 'Tremolo', on: false, params: [0.4, 0.5, 0.5, 0.5] },
-      { name: 'VintageDelay', on: true, params: [0.3, 0.35, 0.3, 0.5, 0.4] },
-      { name: 'bias.reverb', on: true, params: [0.25, 0.5, 0.35, 0.5, 0.5, 0.5, 0.375] },
+      { name: 'Tremolo', on: false, params: [0.4, 0.5, 0.5] },
+      { name: 'VintageDelay', on: true, params: [0.3, 0.35, 0.3, 0.5] },
+      { name: 'bias.reverb', on: true, params: [0.25, 0.5, 0.35, 0.5, 0.5, 0.5, 0.3, 1] },
     ],
   },
   {
     name: 'Lead',
     pedals: [
-      { name: 'bias.noisegate', on: true, params: [0.35, 0.4] },
-      { name: 'BlueComp', on: true, params: [0.55, 0.5] },
+      { name: 'bias.noisegate', on: true, params: [0.35, 0.4, 0] },
+      { name: 'BlueComp', on: true, params: [0.55, 0.5, 0.4, 0.6] },
       { name: 'ProCoRat', on: true, params: [0.6, 0.5, 0.55] },
       { name: 'SLO100', on: true, params: [0.75, 0.6, 0.45, 0.5, 0.55] },
-      { name: 'Phaser', on: false, params: [0.5, 0.5, 0.5, 0.5] },
+      { name: 'Phaser', on: false, params: [0.5, 0.5] },
       { name: 'DelayEchoFilt', on: true, params: [0.4, 0.45, 0.35, 0.5, 0.45] },
-      { name: 'bias.reverb', on: true, params: [0.4, 0.5, 0.45, 0.5, 0.5, 0.5, 0.625] },
+      { name: 'bias.reverb', on: true, params: [0.4, 0.5, 0.45, 0.5, 0.5, 0.5, 0.6, 1] },
     ],
   },
   {
     name: 'Acoustic',
     pedals: [
-      { name: 'bias.noisegate', on: false, params: [0.1, 0.3] },
-      { name: 'BBEOpticalComp', on: true, params: [0.45, 0.5] },
-      { name: 'Booster', on: false, params: [0.2, 0.5, 0.5] },
+      { name: 'bias.noisegate', on: false, params: [0.1, 0.3, 0] },
+      { name: 'BBEOpticalComp', on: true, params: [0.45, 0.5, 0.5, 0] },
+      { name: 'Booster', on: false, params: [0.2] },
       { name: 'Acoustic', on: true, params: [0.3, 0.55, 0.5, 0.6, 0.65] },
-      { name: 'Cloner', on: false, params: [0.3, 0.5, 0.5, 0.5] },
+      { name: 'Cloner', on: false, params: [0.3, 0.5] },
       { name: 'DelayMono', on: false, params: [0.2, 0.3, 0.2, 0.5, 0.3] },
-      { name: 'bias.reverb', on: true, params: [0.45, 0.5, 0.5, 0.5, 0.5, 0.5, 0.875] },
+      { name: 'bias.reverb', on: true, params: [0.45, 0.5, 0.5, 0.5, 0.5, 0.5, 0.8, 1] },
     ],
   },
 ]

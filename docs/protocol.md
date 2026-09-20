@@ -49,8 +49,8 @@ Inside the blocks sits a chunk.
 
 ```
 0-1    f0 01      start marker
-2      seq        groups the chunks of one message
-3      checksum   exclusive or of the data bytes
+2      seq        always 3a; it groups nothing, despite the name
+3      checksum   exclusive or of the body
 4      cmd
 5      sub
 ...    data       7-bit encoded, see below
