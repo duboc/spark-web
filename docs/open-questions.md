@@ -110,13 +110,34 @@ spring". That phrase is prose, not a list.
 
 **Settle it:** change the room in the official app and record the float.
 
-### 7. Write mode and MTU
+### 7. Which channel an uploaded preset must carry
 
-`BleTransport` prefers `writeValueWithoutResponse` and falls back to
-`writeValue`. A preset upload produces blocks near the 173-byte ceiling, and
-Chrome may fragment them. No preset has been uploaded to real hardware yet.
+Uploading works on the wire and fails at the destination.
 
-**Settle it:** upload a preset over Bluetooth and see whether the amp takes it.
+Eleven blocks reached a real amp across three attempts, every one at or under
+the 173-byte ceiling, and the first chunk decodes to `total=3 index=0 count=128`
+followed by the preset — exactly the shape the amp itself produces. The amp
+replied `04 01`, preceded by three `05 01`, and then carried on playing the
+preset it already had.
+
+So the framing is right and the channel is wrong. Those uploads carried lead
+byte `00` with channel `7f`, which community notes call "temporary". This amp
+never uses `7f`: it marks its live sound with lead byte `01` and the channel of
+the slot the sound came from. The acknowledgement means the framing parsed,
+nothing more.
+
+`uploadPreset` now sends the live form — lead `01`, selected channel — which is
+the next hypothesis and is untested.
+
+**Settle it:** send a preset that sounds obviously different from the one
+playing, and listen. If the live form is also ignored, the remaining hypothesis
+is that `01 01` writes to a slot, which is destructive; `presets/factory-backup`
+holds this amp's four presets so a slot can be put back.
+
+**Also open:** `BleTransport` prefers `writeValueWithoutResponse` and falls back
+to `writeValue`. Blocks near the ceiling went out without complaint, so Chrome
+appears not to fragment them, but nothing has confirmed the amp received them
+whole.
 
 ### 8. The minimum gap between commands
 

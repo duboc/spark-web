@@ -109,7 +109,7 @@ the amp ignores without complaint, which is the worst failure mode available.
 
 | cmd | sub | Action | Payload |
 | --- | --- | --- | --- |
-| `01` | `01` | Send a whole preset | the preset, across several chunks |
+| `01` | `01` | Send a whole preset | the preset, across several chunks. Lead byte `01` with the selected channel; `7f` is acknowledged and discarded |
 | `01` | `04` | Change an effect knob | prefixed name, index, float |
 | `01` | `06` | Swap an effect | prefixed name, prefixed name |
 | `01` | `15` | Toggle an effect | prefixed name, `c3` or `c2` |
@@ -138,6 +138,7 @@ The amp slot is special. Parameter changes and model swaps on slot 3 use command
 | `03` | `38` | Somebody pressed a preset button on the amp |
 | `03` | `63` | The tempo changed |
 | `04` | any | An acknowledgement; the sub mirrors what it acknowledges |
+| `05` | any | Also an acknowledgement. Seen three times before an `04 01` while a multi-chunk upload was in flight, so it may mean "chunk taken, send the next". Unconfirmed. |
 
 `03 37` and `03 38` are what make the page follow the hardware. Wire them up
 early.
