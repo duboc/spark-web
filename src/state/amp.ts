@@ -290,9 +290,24 @@ export class AmpController {
     this.uploadPreset({ ...live, name })
   }
 
-  /** Send a whole preset — the path that makes a preset held in a file audible. */
-  uploadPreset(preset: Preset, channel = LIVE_CHANNEL): void {
-    const target: Preset = { ...preset, channel }
+  /**
+   * Send a whole preset — the path that makes a preset held in a file audible.
+   *
+   * It goes as the *live* sound: lead byte 01, carrying the channel of the slot
+   * currently selected. That is the form this amp uses when it reports its own
+   * live state, and it is deliberately not the `7f` community notes describe as
+   * "temporary". A capture shows the amp acknowledging a `7f` upload and then
+   * discarding it, so `7f` looks like a value it parses and will not accept.
+   *
+   * Nothing is stored. Committing a sound to a slot is {@link storeToSlot},
+   * which is destructive and asks first.
+   */
+  uploadPreset(preset: Preset, options: { channel?: number; live?: boolean } = {}): void {
+    const live = options.live ?? true
+    const channel =
+      options.channel ?? this.#snapshot.live?.channel ?? this.#snapshot.currentPreset ?? 0
+    const target: Preset = { ...preset, channel, ...(live ? { live: true } : {}) }
+    if (!live) delete target.live
     const problems = validatePreset(target)
     if (problems.length > 0) {
       this.#log('error', `will not send "${preset.name}": ${problems[0]}`)
@@ -300,7 +315,7 @@ export class AmpController {
     }
     this.#uploadSeq = (this.#uploadSeq + 1) & 0x7f || 1
     this.#send(cmd.sendPreset(target, this.#uploadSeq), cmd.requestLiveState())
-    this.#log('event', `sending preset "${target.name}"`)
+    this.#log('event', `sending preset "${target.name}" as ${live ? 'live' : 'stored'}, channel ${channel}`)
   }
 
   /* ── captures ───────────────────────────────────────────────────────────── */

@@ -211,7 +211,11 @@ export class MockTransport implements Transport {
 
     this.#uploads.delete(chunk.seq)
     const preset = parsePreset(concat(entry.parts as Uint8Array[]))
-    if (preset.channel <= 3) this.#presets[preset.channel] = preset
+    // A preset marked live changes the live sound and stores nothing. One that
+    // is not marked live is taken as a write to its slot. This encodes what we
+    // believe after watching the amp discard an upload on channel 7f; it is a
+    // belief, and only hardware settles it.
+    if (!preset.live && preset.channel <= 3) this.#presets[preset.channel] = preset
     this.#live = { ...preset, live: true, channel: preset.channel <= 3 ? preset.channel : this.#current }
     this.#reply(0x04, 0x01, new Uint8Array(0))
   }

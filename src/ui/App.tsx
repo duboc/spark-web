@@ -11,7 +11,18 @@ import { Library } from './Library.js'
 import { ProtocolLog } from './ProtocolLog.js'
 import { looksLikePreset, pickJson, saveCapture, savePreset } from './files.js'
 
-const amp = new AmpController()
+/**
+ * One controller, kept across hot reloads.
+ *
+ * It lives at module scope, so editing this file re-runs the module and would
+ * otherwise build a second controller and abandon the first — along with the
+ * Bluetooth connection it was holding. Losing a connection because a comment
+ * changed is a poor way to spend a session with an amp switched on, and
+ * reconnecting needs a user gesture, so it cannot be repaired from here.
+ */
+const amp: AmpController =
+  (import.meta.hot?.data.amp as AmpController | undefined) ?? new AmpController()
+if (import.meta.hot) import.meta.hot.data.amp = amp
 
 export function App() {
   const snapshot = useSyncExternalStore(amp.subscribe, amp.getSnapshot)
