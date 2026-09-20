@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spark Web Control</title>
+<style>
+  :root{
+    --bg:#121214; --panel:#1b1b1f; --panel-2:#232329; --line:#2e2e35;
+    --txt:#e9e9ee; --dim:#8b8b96; --amber:#ffa53c; --amber-dim:#7a4e16;
+    --green:#4ade80; --red:#f87171;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif}
+  header{position:sticky;top:0;z-index:10;display:flex;gap:16px;align-items:center;
+    padding:12px 20px;background:rgba(18,18,20,.92);backdrop-filter:blur(8px);
+    border-bottom:1px solid var(--line)}
+  h1{font-size:15px;margin:0;font-weight:600;letter-spacing:.02em}
+  h1 span{color:var(--amber)}
+  .spacer{flex:1}
+  button{font:inherit;color:var(--txt);background:var(--panel-2);border:1px solid var(--line);
+    border-radius:7px;padding:7px 13px;cursor:pointer;transition:.12s}
+  button:hover:not(:disabled){border-color:var(--amber);color:var(--amber)}
+  button:disabled{opacity:.35;cursor:not-allowed}
+  button.primary{background:var(--amber);color:#1a1205;border-color:var(--amber);font-weight:600}
+  button.primary:hover{filter:brightness(1.1);color:#1a1205}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--red);display:inline-block;margin-right:7px}
+  .dot.on{background:var(--green);box-shadow:0 0 8px var(--green)}
+  #status{color:var(--dim);font-size:13px}
+  main{max-width:1180px;margin:0 auto;padding:20px}
+  .presets{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:20px}
+  .preset{padding:16px 10px;text-align:center;font-weight:600;font-size:15px;border-radius:9px}
+  .preset small{display:block;font-weight:400;font-size:11px;color:var(--dim);margin-top:3px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .preset.active{background:var(--amber-dim);border-color:var(--amber);color:var(--amber)}
+  .preset.active small{color:#d9a05f}
+  .chain{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:14px}
+  .slot{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:14px}
+  .slot.off{opacity:.5}
+  .slot.amp{border-color:var(--amber-dim)}
+  .slot-head{display:flex;align-items:center;gap:9px;margin-bottom:12px}
+  .slot-type{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);
+    font-weight:700;flex:1}
+  .slot.amp .slot-type{color:var(--amber)}
+  .toggle{width:38px;height:21px;border-radius:11px;background:#3a3a42;border:none;padding:0;
+    position:relative;cursor:pointer;flex:none}
+  .toggle::after{content:"";position:absolute;top:3px;left:3px;width:15px;height:15px;
+    border-radius:50%;background:#8b8b96;transition:.15s}
+  .toggle.on{background:var(--amber-dim)}
+  .toggle.on::after{left:20px;background:var(--amber)}
+  select{width:100%;background:var(--panel-2);color:var(--txt);border:1px solid var(--line);
+    border-radius:7px;padding:7px 9px;font:inherit;margin-bottom:12px;cursor:pointer}
+  select:focus{outline:none;border-color:var(--amber)}
+  .knob{margin-bottom:11px}
+  .knob-row{display:flex;justify-content:space-between;font-size:11px;margin-bottom:4px}
+  .knob-row b{font-weight:500;color:var(--dim)}
+  .knob-row i{font-style:normal;font-family:var(--mono);color:var(--amber);font-size:11px}
+  input[type=range]{width:100%;height:4px;-webkit-appearance:none;appearance:none;
+    background:#32323a;border-radius:3px;outline:none;cursor:pointer}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;height:15px;
+    border-radius:50%;background:var(--amber);cursor:pointer;border:2px solid var(--bg)}
+  input[type=range]::-moz-range-thumb{width:13px;height:13px;border-radius:50%;
+    background:var(--amber);cursor:pointer;border:2px solid var(--bg)}
+  .empty{text-align:center;color:var(--dim);padding:70px 20px;line-height:1.9}
+  .empty kbd{font-family:var(--mono);background:var(--panel-2);border:1px solid var(--line);
+    border-radius:4px;padding:1px 6px;font-size:12px}
+  #logwrap{margin-top:24px;border-top:1px solid var(--line);padding-top:14px}
+  #logbar{display:flex;gap:12px;align-items:center;font-size:12px;color:var(--dim)}
+  #log{font-family:var(--mono);font-size:11px;line-height:1.55;background:#0d0d0f;
+    border:1px solid var(--line);border-radius:8px;padding:10px;height:220px;overflow-y:auto;
+    margin-top:10px;white-space:pre-wrap;word-break:break-all;display:none}
+  #log.show{display:block}
+  #log .rx{color:#6aa3d8}#log .tx{color:var(--amber)}
+  #log .ev{color:var(--green)}#log .er{color:var(--red)}
+  label.chk{display:flex;align-items:center;gap:5px;cursor:pointer}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>SPARK <span>WEB</span></h1>
+  <span id="status"><span class="dot" id="dot"></span>Disconnected</span>
+  <div class="spacer"></div>
+  <button id="refresh" disabled>Reload state</button>
+  <button id="connect" class="primary">Connect</button>
+</header>
+
+<main>
+  <div class="presets" id="presets" style="display:none">
+    <button class="preset" data-p="0">1<small>&mdash;</small></button>
+    <button class="preset" data-p="1">2<small>&mdash;</small></button>
+    <button class="preset" data-p="2">3<small>&mdash;</small></button>
+    <button class="preset" data-p="3">4<small>&mdash;</small></button>
+    <button class="preset" id="store" style="font-size:13px">Store&nbsp;to&hellip;<small>overwrite slot</small></button>
+  </div>
+
+  <div class="chain" id="chain"></div>
+
+  <div class="empty" id="empty">
+    Pair <b>Spark 40 Audio</b> in your OS Bluetooth settings first (that's the audio link).<br>
+    Then hit <b>Connect</b> above and pick <b>Spark 40 BLE</b> — that's the control link.<br>
+    <span style="color:#5c5c66">Chrome or Edge required. Serve over <kbd>localhost</kbd> or https.</span>
+  </div>
+
+  <div id="logwrap">
+    <div id="logbar">
+      <label class="chk"><input type="checkbox" id="showlog"> Protocol log</label>
+      <label class="chk"><input type="checkbox" id="rawlog"> Include raw hex</label>
+      <div class="spacer"></div>
+      <button id="clearlog" style="padding:3px 9px;font-size:12px">Clear</button>
+    </div>
+    <div id="log"></div>
+  </div>
+</main>
+
+<script>
+"use strict";
+/* ─────────────────────────────────────────────────────────────
+   Positive Grid Spark — BLE control over Web Bluetooth.
+   Protocol per community RE (paulhamsh / soundshed / kraps).
+   Service ffc0 · write ffc1 · notify ffc2
+   ───────────────────────────────────────────────────────────── */
+
+const SERVICE = '0000ffc0-0000-1000-8000-00805f9b34fb';
+const CH_TX   = '0000ffc1-0000-1000-8000-00805f9b34fb';
+const CH_RX   = '0000ffc2-0000-1000-8000-00805f9b34fb';
+
+const SLOTS = [
+  {type:'Gate',   cmdSet:0x01},
+  {type:'Comp',   cmdSet:0x01},
+  {type:'Drive',  cmdSet:0x01},
+  {type:'Amp',    cmdSet:0x03},   // amp slot uses cmd 03 for param/swap
+  {type:'Mod',    cmdSet:0x01},
+  {type:'Delay',  cmdSet:0x01},
+  {type:'Reverb', cmdSet:0x01},
+];
+
+// DSP name -> display name, per slot. DSP name is what goes on the wire.
+const CATALOG = [
+  {'bias.noisegate':'Noise Gate'},
+  {'LA2AComp':'LA Comp','BlueComp':'Sustain Comp','Compressor':'Red Comp',
+   'BassComp':'Bass Comp','BBEOpticalComp':'Optical Comp'},
+  {'Booster':'Booster','DistortionTS9':'Tube Drive','Overdrive':'Over Drive','Fuzz':'Fuzz Face',
+   'ProCoRat':'Black Op','MetalZoneMT2':'Metal Zone','BassBigMuff':'Bass Muff',
+   'GuitarMuff':'Guitar Muff','MaestroBassmaster':'Bassmaster','SABdriver':'SAB Driver',
+   'TrebleBooster':'Treble Booster','Sansamp':'Sansamp'},
+  {'RolandJC120':'Silver 120','Twin':'Black Duo','ADClean':'AD Clean','94MatchDCV2':'Match DC',
+   'Bassman':'Tweed Bass','AC Boost':'AC Boost','Checkmate':'Checkmate',
+   'TwoStoneSP50':'Two Stone SP50','Deluxe65':'American Deluxe','Plexi':'Plexiglass',
+   'OverDrivenJM45':'JM45','OverDrivenLuxVerb':'Lux Verb','Bogner':'RB 101',
+   'OrangeAD30':'British 30','AmericanHighGain':'American High Gain','SLO100':'SLO 100',
+   'YJM100':'YJM100','Rectifier':'Treadplate','EVH':'Insane','SwitchAxeLead':'Switch Axe',
+   'Invader':'Rocker V','BE101':'BE 101','JCM800':'JCM800','Deluxe57':"'57 Deluxe",
+   'JCM900':'JCM900','MatchlessDC30':'Matchless DC30','DrZ':'Dr Z','ENGL':'ENGL',
+   'Acoustic':'Pure Acoustic','AcousticAmpV2':'Fishboy','FatAcousticV2':'Jumbo',
+   'FlatAcoustic':'Flat Acoustic','GK800':'RB-800','Sunny3000':'Sunny 3000','W600':'W600',
+   'Hammer500':'Hammer 500'},
+  {'Tremolo':'Tremolo','ChorusAnalog':'Chorus','Flanger':'Flanger','Phaser':'Phaser',
+   'Vibrato01':'Vibrato','UniVibe':'UniVibe','Cloner':'Cloner Chorus','MiniVibe':'Classic Vibe',
+   'Tremolator':'Tremolator','TremoloSquare':'Tremolo Square'},
+  {'DelayMono':'Digital Delay','DelayEchoFilt':'Echo Filt','VintageDelay':'Vintage Delay',
+   'DelayReverse':'Reverse Delay','DelayMultiHead':'Multi Head','DelayRe201':'Echo Tape'},
+  {'bias.reverb':'Reverb'},
+];
+
+const AMP_KNOBS = ['Gain','Treble','Mid','Bass','Master'];
+
+/* ── state ───────────────────────────────────────────────── */
+let device=null, txChar=null, rxChar=null;
+let slots = [];                 // [{name,on,params:[float]}]
+let currentPreset = null;
+const presetNames = [null,null,null,null];
+let pendingPresetQuery = null;  // which slot number we last asked for
+
+/* ── logging ─────────────────────────────────────────────── */
+const $log=document.getElementById('log');
+function log(cls,msg){
+  const line=document.createElement('div');
+  line.className=cls; line.textContent=msg;
+  $log.appendChild(line);
+  while($log.childElementCount>400) $log.removeChild($log.firstChild);
+  $log.scrollTop=$log.scrollHeight;
+}
+const hex=a=>Array.from(a,b=>b.toString(16).padStart(2,'0')).join(' ');
+document.getElementById('showlog').onchange=e=>$log.classList.toggle('show',e.target.checked);
+document.getElementById('clearlog').onclick=()=>$log.innerHTML='';
+const wantRaw=()=>document.getElementById('rawlog').checked;
+
+/* ── 7-bit codec ─────────────────────────────────────────── */
+function enc7(data){
+  const out=[];
+  for(let i=0;i<data.length;i+=7){
+    const g=data.slice(i,i+7); let hb=0; const body=[];
+    for(let j=0;j<g.length;j++){
+      let b=g[j];
+      if(b&0x80){hb|=(1<<j); b&=0x7f;}
+      body.push(b);
+    }
+    out.push(hb,...body);
+  }
+  return out;
+}
+function dec7(data){
+  const out=[];
+  for(let i=0;i<data.length;i+=8){
+    const hb=data[i];
+    for(let j=0;j<7&&i+1+j<data.length;j++){
+      let b=data[i+1+j];
+      if(hb&(1<<j)) b|=0x80;
+      out.push(b);
+    }
+  }
+  return out;
+}
+
+/* ── payload primitives ──────────────────────────────────── */
+// "prefixed string": bare length, then 0xa0+length, then the bytes.
+function pstr(s){
+  const b=[...new TextEncoder().encode(s)];
+  return [b.length, 0xa0+b.length, ...b];
+}
+function f32(v){
+  const buf=new ArrayBuffer(4);
+  new DataView(buf).setFloat32(0,v,false);       // big-endian
+  return [0xca, ...new Uint8Array(buf)];
+}
+
+/* ── frame a single-block command ────────────────────────── */
+function frame(cmd,sub,payload){
+  const chunk=[0xf0,0x01,0x3a,0x15,cmd,sub,...enc7(payload),0xf7];
+  const size=16+chunk.length;
+  if(size>0xad) throw new Error('block too large ('+size+') — needs chunking');
+  return new Uint8Array([0x01,0xfe,0x00,0x00,0x53,0xfe,size,0,0,0,0,0,0,0,0,0,...chunk]);
+}
+
+/* ── write queue (the amp dislikes being flooded) ────────── */
+const queue=[]; let draining=false;
+function send(cmd,sub,payload,label,gap=60){
+  queue.push({pkt:frame(cmd,sub,payload),label,gap});
+  drain();
+}
+async function drain(){
+  if(draining) return; draining=true;
+  while(queue.length){
+    const {pkt,label,gap}=queue.shift();
+    try{
+      if(txChar.properties.writeWithoutResponse) await txChar.writeValueWithoutResponse(pkt);
+      else await txChar.writeValue(pkt);
+      log('tx','TX  '+label+(wantRaw()?'\n    '+hex(pkt):''));
+    }catch(err){ log('er','TX FAILED  '+label+' — '+err.message); }
+    await new Promise(r=>setTimeout(r,gap));
+  }
+  draining=false;
+}
+
+/* ── commands ────────────────────────────────────────────── */
+const cmd = {
+  selectPreset : n     => send(0x01,0x38,[0x00,n],'select preset '+(n+1),150),
+  storePreset  : n     => send(0x03,0x27,[0x00,n],'STORE to slot '+(n+1),300),
+  toggle       : (s,on)=> send(0x01,0x15,[...pstr(s.name), on?0xc3:0xc2],
+                               (on?'on  ':'off ')+s.name),
+  param        : (s,i,v)=> send(SLOTS[s.idx].cmdSet, SLOTS[s.idx].cmdSet===0x03?0x37:0x04,
+                               [...pstr(s.name), i, ...f32(v)],
+                               s.name+' p'+i+'='+v.toFixed(3), 45),
+  swap         : (s,nu) => send(SLOTS[s.idx].cmdSet, 0x06,
+                               [...pstr(s.name), ...pstr(nu)], s.name+' → '+nu, 200),
+  getCurrent   : ()    => { pendingPresetQuery='current';
+                            send(0x02,0x01,[0x01,0x00],'get current state',400); },
+  getPreset    : n     => { pendingPresetQuery=n;
+                            send(0x02,0x01,[0x00,n],'get preset '+(n+1),400); },
+  getPresetNum : ()    => send(0x02,0x10,[],'get preset number',250),
+  getName      : ()    => send(0x02,0x11,[],'get amp name',250),
+};
+
+/* ── receive: blocks → chunks → messages ─────────────────── */
+let blockBuf=[], chunkBuf=[];
+const presetAsm={};   // seq -> accumulated decoded bytes
+
+function onNotify(ev){
+  const v=new Uint8Array(ev.target.value.buffer);
+  if(wantRaw()) log('rx','RX  '+hex(v));
+  blockBuf.push(...v);
+  drainBlocks(); drainChunks();
+}
+
+function drainBlocks(){
+  for(;;){
+    let i=0;
+    while(i+1<blockBuf.length && !(blockBuf[i]===0x01&&blockBuf[i+1]===0xfe)) i++;
+    if(i+1>=blockBuf.length){ if(blockBuf.length>8192) blockBuf=[]; return; }
+    if(i) blockBuf.splice(0,i);
+    if(blockBuf.length<16) return;
+    const size=blockBuf[6];
+    if(size<17||size>0xc0){ blockBuf.splice(0,2); continue; }
+    if(blockBuf.length<size) return;
+    chunkBuf.push(...blockBuf.splice(0,size).slice(16));
+  }
+}
+
+function drainChunks(){
+  for(;;){
+    let i=0;
+    while(i+1<chunkBuf.length && !(chunkBuf[i]===0xf0&&chunkBuf[i+1]===0x01)) i++;
+    if(i+1>=chunkBuf.length){ if(chunkBuf.length>8192) chunkBuf=[]; return; }
+    if(i) chunkBuf.splice(0,i);
+    const end=chunkBuf.indexOf(0xf7);
+    if(end<0) return;
+    handleChunk(chunkBuf.splice(0,end+1));
+  }
+}
+
+function handleChunk(c){
+  const seq=c[2], cmdB=c[4], sub=c[5];
+  const body=c.slice(6,-1);
+
+  if(cmdB===0x04||cmdB===0x05){                       // ACK
+    log('ev','ACK 0x'+sub.toString(16).padStart(2,'0')); return;
+  }
+
+  if(cmdB===0x03 && sub===0x01){                      // preset data, multi-chunk
+    const total=body[0], idx=body[1];
+    const part=dec7(body.slice(3));
+    if(idx===0||!presetAsm[seq]) presetAsm[seq]=[];
+    presetAsm[seq].push(...part);
+    log('ev','preset chunk '+(idx+1)+'/'+total);
+    if(idx>=total-1){ const d=presetAsm[seq]; delete presetAsm[seq]; parsePreset(d); }
+    return;
+  }
+
+  // Everything else is single-chunk. Some firmwares prepend the 3-byte
+  // chunk header even then, so try both alignments and keep what parses.
+  const a=decodeMsg(cmdB,sub,dec7(body));
+  if(a) return;
+  const b=decodeMsg(cmdB,sub,dec7(body.slice(3)));
+  if(!b) log('er','unparsed  cmd='+cmdB.toString(16)+' sub='+sub.toString(16)+
+                  (wantRaw()?'  '+hex(body):''));
+}
+
+/* ── value readers over a decoded byte array ─────────────── */
+function rdr(d){
+  let i=0;
+  return {
+    get pos(){return i;}, set pos(v){i=v;},
+    left(){return d.length-i;},
+    byte(){return d[i++];},
+    peek(){return d[i];},
+    str(){
+      let b=d[i];
+      if(b===0xd9){ const n=d[i+1]; i+=2; return take(n); }
+      if(b>=0xa0&&b<=0xbf){ i++; return take(b-0xa0); }
+      // prefixed form: bare length, then 0xa0+length
+      if(b<0x40 && d[i+1]>=0xa0 && d[i+1]<=0xbf){ i++; const n=d[i]-0xa0; i++; return take(n); }
+      if(b<0x40 && d[i+1]===0xd9){ i+=2; const n=d[i]; i++; return take(n); }
+      return null;
+    },
+    f32(){
+      if(d[i]!==0xca) return null;
+      const dv=new DataView(new Uint8Array(d.slice(i+1,i+5)).buffer);
+      i+=5; return dv.getFloat32(0,false);
+    },
+    bool(){ const b=d[i]; if(b!==0xc2&&b!==0xc3) return null; i++; return b===0xc3; },
+    arr(){ const b=d[i]; if(b<0x90||b>0x9f) return null; i++; return b-0x90; }
+  };
+  function take(n){ const s=String.fromCharCode(...d.slice(i,i+n)); i+=n; return s; }
+}
+
+function decodeMsg(cmdB,sub,d){
+  const r=rdr(d);
+  try{
+    if(cmdB===0x03&&sub===0x38){ r.byte(); const n=r.byte();
+      if(n>3) return false; setActivePreset(n); log('ev','amp: preset '+(n+1)); return true; }
+    if(cmdB===0x03&&sub===0x10){ r.byte(); const n=r.byte();
+      if(n>3) return false; setActivePreset(n); log('ev','amp: current preset '+(n+1)); return true; }
+    if(cmdB===0x03&&sub===0x15){ const nm=r.str(), on=r.bool();
+      if(!nm||on===null) return false;
+      const s=slots.find(x=>x.name===nm); if(s){ s.on=on; render(); }
+      log('ev','amp: '+nm+' '+(on?'on':'off')); return true; }
+    if(cmdB===0x03&&sub===0x37){ const nm=r.str(); if(!nm) return false;
+      const i=r.byte(), v=r.f32(); if(v===null) return false;
+      const s=slots.find(x=>x.name===nm); if(s){ s.params[i]=v; render(); }
+      log('ev','amp: '+nm+' p'+i+'='+v.toFixed(3)); return true; }
+    if(cmdB===0x03&&sub===0x06){ const a=r.str(), b=r.str(); if(!a||!b) return false;
+      const s=slots.find(x=>x.name===a); if(s){ s.name=b; render(); }
+      log('ev','amp: '+a+' → '+b); cmd.getCurrent(); return true; }
+    if(cmdB===0x03&&sub===0x27){ r.byte(); const n=r.byte();
+      log('ev','amp: stored to slot '+(n+1)); return true; }
+    if(cmdB===0x03&&sub===0x63){ const v=r.f32(); if(v===null) return false;
+      log('ev','amp: bpm '+v.toFixed(1)); return true; }
+    if(cmdB===0x03&&sub===0x11){ const nm=r.str(); if(!nm) return false;
+      log('ev','amp name: '+nm); return true; }
+    return false;
+  }catch(e){ return false; }
+}
+
+/* ── preset parser ───────────────────────────────────────── */
+function parsePreset(d){
+  const r=rdr(d);
+  try{
+    r.byte();                       // leading 00
+    const channel=r.byte();
+    r.str();                        // uuid
+    const name=r.str();
+    r.str(); r.str(); r.str();      // version, description, icon
+    r.f32();                        // bpm
+    const count=r.arr();
+    if(count===null) throw new Error('no pedal array marker');
+    const out=[];
+    for(let k=0;k<count;k++){
+      const nm=r.str();
+      const on=r.bool();
+      const np=r.arr();
+      const params=[];
+      for(let p=0;p<np;p++){ const idx=r.byte(); r.byte(); params[idx]=r.f32(); }
+      out.push({idx:k,name:nm,on,params});
+    }
+    slots=out;
+    if(channel<=3){ presetNames[channel]=name; if(pendingPresetQuery!=='current') setActivePreset(channel); }
+    log('ev','preset parsed: "'+name+'" (ch '+channel.toString(16)+') · '+out.length+' slots');
+    render();
+  }catch(e){
+    log('er','preset parse failed: '+e.message+(wantRaw()?'\n    '+hex(d):''));
+  }
+}
+
+/* ── UI ──────────────────────────────────────────────────── */
+const $chain=document.getElementById('chain');
+const $empty=document.getElementById('empty');
+const $presets=document.getElementById('presets');
+
+function setActivePreset(n){
+  currentPreset=n;
+  document.querySelectorAll('.preset[data-p]').forEach(b=>
+    b.classList.toggle('active', +b.dataset.p===n));
+}
+
+function knobName(slotIdx,i,total){
+  if(SLOTS[slotIdx].type==='Amp' && total<=AMP_KNOBS.length) return AMP_KNOBS[i]||('P'+(i+1));
+  return 'P'+(i+1);
+}
+
+function render(){
+  if(!slots.length){ $chain.innerHTML=''; return; }
+  $empty.style.display='none'; $presets.style.display='grid';
+  document.querySelectorAll('.preset[data-p]').forEach(b=>{
+    const n=presetNames[+b.dataset.p];
+    b.querySelector('small').textContent=n||'—';
+  });
+  $chain.innerHTML='';
+  slots.forEach(s=>{
+    const meta=SLOTS[s.idx]||{type:'Slot '+s.idx,cmdSet:0x01};
+    const card=document.createElement('div');
+    card.className='slot'+(s.on?'':' off')+(meta.type==='Amp'?' amp':'');
+
+    const head=document.createElement('div'); head.className='slot-head';
+    const t=document.createElement('div'); t.className='slot-type'; t.textContent=meta.type;
+    const tg=document.createElement('button'); tg.className='toggle'+(s.on?' on':'');
+    tg.title='bypass'; tg.onclick=()=>{ s.on=!s.on; cmd.toggle(s,s.on); render(); };
+    head.append(t,tg); card.append(head);
+
+    const cat=CATALOG[s.idx]||{};
+    const sel=document.createElement('select');
+    if(!(s.name in cat)) sel.append(new Option(s.name,s.name));
+    for(const [dsp,label] of Object.entries(cat)) sel.append(new Option(label,dsp));
+    sel.value=s.name;
+    sel.onchange=()=>{ const nu=sel.value; cmd.swap(s,nu); s.name=nu; setTimeout(cmd.getCurrent,600); };
+    card.append(sel);
+
+    s.params.forEach((v,i)=>{
+      if(v===undefined) return;
+      const k=document.createElement('div'); k.className='knob';
+      const row=document.createElement('div'); row.className='knob-row';
+      const b=document.createElement('b'); b.textContent=knobName(s.idx,i,s.params.length);
+      const val=document.createElement('i'); val.textContent=(v*10).toFixed(1);
+      row.append(b,val);
+      const rg=document.createElement('input');
+      rg.type='range'; rg.min=0; rg.max=1000; rg.value=Math.round(v*1000);
+      let last=0, pend=null;
+      rg.oninput=()=>{
+        const nv=rg.value/1000; s.params[i]=nv; val.textContent=(nv*10).toFixed(1);
+        const now=Date.now();
+        clearTimeout(pend);
+        if(now-last>90){ last=now; cmd.param(s,i,nv); }
+        else pend=setTimeout(()=>{ last=Date.now(); cmd.param(s,i,nv); },100);
+      };
+      k.append(row,rg); card.append(k);
+    });
+    $chain.append(card);
+  });
+}
+
+/* ── preset buttons ──────────────────────────────────────── */
+document.querySelectorAll('.preset[data-p]').forEach(b=>{
+  b.onclick=()=>{ const n=+b.dataset.p; cmd.selectPreset(n); setActivePreset(n);
+                  setTimeout(cmd.getCurrent,600); };
+});
+document.getElementById('store').onclick=()=>{
+  const n=prompt('Overwrite which hardware slot with the current sound? (1-4)');
+  const i=parseInt(n,10)-1;
+  if(i>=0&&i<=3 && confirm('Overwrite preset '+(i+1)+'? This cannot be undone.')) cmd.storePreset(i);
+};
+
+/* ── connect ─────────────────────────────────────────────── */
+const $dot=document.getElementById('dot'), $status=document.getElementById('status');
+function setStatus(txt,ok){
+  $status.innerHTML='';
+  $dot.className='dot'+(ok?' on':'');
+  $status.append($dot,document.createTextNode(txt));
+}
+setStatus('Disconnected',false);
+
+document.getElementById('connect').onclick=async()=>{
+  if(!navigator.bluetooth){ alert('Web Bluetooth not available. Use Chrome or Edge, over localhost or https.'); return; }
+  try{
+    setStatus('Choosing device…',false);
+    device=await navigator.bluetooth.requestDevice({
+      filters:[{services:[SERVICE]},{namePrefix:'Spark'}],
+      optionalServices:[SERVICE]
+    });
+    device.addEventListener('gattserverdisconnected',()=>{
+      setStatus('Disconnected',false);
+      document.getElementById('refresh').disabled=true;
+      log('er','GATT disconnected');
+    });
+    setStatus('Connecting…',false);
+    const server=await device.gatt.connect();
+    const svc=await server.getPrimaryService(SERVICE);
+    txChar=await svc.getCharacteristic(CH_TX);
+    rxChar=await svc.getCharacteristic(CH_RX);
+    await rxChar.startNotifications();
+    rxChar.addEventListener('characteristicvaluechanged',onNotify);
+    setStatus(device.name||'Spark',true);
+    document.getElementById('refresh').disabled=false;
+    log('ev','connected to '+(device.name||'device'));
+    blockBuf=[]; chunkBuf=[];
+    cmd.getName(); cmd.getPresetNum();
+    for(let n=0;n<4;n++) cmd.getPreset(n);
+    cmd.getCurrent();
+  }catch(err){
+    setStatus('Disconnected',false);
+    log('er','connect failed: '+err.message);
+  }
+};
+document.getElementById('refresh').onclick=()=>{
+  for(let n=0;n<4;n++) cmd.getPreset(n);
+  cmd.getPresetNum(); cmd.getCurrent();
+};
+</script>
+</body>
+</html>
