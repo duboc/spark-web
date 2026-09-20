@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { AmpController } from '../state/amp.js'
+import { diffPresets, slotDiff } from '../state/diff.js'
 import { BleTransport, bluetoothAvailable } from '../transport/ble.js'
 import { MockTransport } from '../transport/mock.js'
 import { HARDWARE_PRESETS } from '../protocol/catalog.js'
 import type { Preset } from '../protocol/preset.js'
 import { SlotCard } from './SlotCard.js'
+import { ChainStrip } from './ChainStrip.js'
+import { Library } from './Library.js'
 import { ProtocolLog } from './ProtocolLog.js'
 import { looksLikePreset, pickJson, saveCapture, savePreset } from './files.js'
 
@@ -16,6 +19,7 @@ export function App() {
   const [rawLog, setRawLog] = useState(false)
   const [storing, setStoring] = useState(false)
   const [draftName, setDraftName] = useState<string | null>(null)
+  const [dropping, setDropping] = useState(false)
 
   useEffect(() => {
     amp.rawLogging = rawLog
@@ -24,8 +28,17 @@ export function App() {
   const connected = snapshot.status === 'connected'
   const live = snapshot.live
 
+  // What you have changed since the preset was stored. Both sides are already in
+  // memory, so this is a pure comparison rather than anything asked of the amp.
+  const diff = useMemo(
+    () => diffPresets(live, amp.storedForLive()),
+    [live, snapshot.stored],
+  )
+
   const connectBle = useCallback(() => void amp.connect(new BleTransport()), [])
   const connectMock = useCallback(() => void amp.connect(new MockTransport()), [])
+
+  const send = useCallback((preset: Preset) => amp.uploadPreset(preset), [])
 
   const loadFromFile = useCallback(async () => {
     const data = await pickJson<Preset>('.json')
@@ -35,6 +48,43 @@ export function App() {
       return
     }
     amp.uploadPreset(data)
+  }, [])
+
+  // Dropping a preset file anywhere on the page sends it. A file is untrusted
+  // input like anything else, so it is checked before it goes near the amp.
+  useEffect(() => {
+    const over = (event: DragEvent) => {
+      if (!event.dataTransfer?.types.includes('Files')) return
+      event.preventDefault()
+      setDropping(true)
+    }
+    const leave = (event: DragEvent) => {
+      if (event.relatedTarget === null) setDropping(false)
+    }
+    const drop = (event: DragEvent) => {
+      event.preventDefault()
+      setDropping(false)
+      const file = event.dataTransfer?.files[0]
+      if (!file) return
+      void file.text().then((text) => {
+        try {
+          const parsed: unknown = JSON.parse(text)
+          if (looksLikePreset(parsed)) amp.uploadPreset(parsed)
+          else window.alert(`${file.name} is not a Spark preset.`)
+        } catch {
+          window.alert(`${file.name} is not readable as JSON.`)
+        }
+      })
+    }
+
+    window.addEventListener('dragover', over)
+    window.addEventListener('dragleave', leave)
+    window.addEventListener('drop', drop)
+    return () => {
+      window.removeEventListener('dragover', over)
+      window.removeEventListener('dragleave', leave)
+      window.removeEventListener('drop', drop)
+    }
   }, [])
 
   // Number keys switch presets, the way the four buttons on the amp do.
@@ -53,6 +103,12 @@ export function App() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [connected])
+
+  const focusSlot = useCallback((slot: number) => {
+    const card = document.getElementById(`slot-${slot}`)
+    card?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    card?.querySelector<HTMLElement>('[role="slider"]')?.focus({ preventScroll: true })
+  }, [])
 
   const statusText = useMemo(() => {
     if (snapshot.status === 'connecting') return 'Connecting…'
@@ -113,13 +169,16 @@ export function App() {
                   onClick={() => amp.selectPreset(slot)}
                 >
                   <span className="n">PRESET {slot + 1}</span>
-                  <span className="name">{snapshot.presetNames[slot] ?? '—'}</span>
+                  <span className="name">{snapshot.stored[slot]?.name ?? '—'}</span>
                 </button>
               ))}
             </div>
 
+            <ChainStrip pedals={live.pedals} diff={diff} onSelect={focusSlot} />
+
             <div className="toolbar">
               <input
+                className="namefield"
                 value={draftName ?? live.name}
                 aria-label="Preset name"
                 onChange={(event) => setDraftName(event.target.value)}
@@ -131,14 +190,29 @@ export function App() {
                   if (event.key === 'Enter') event.currentTarget.blur()
                   if (event.key === 'Escape') setDraftName(null)
                 }}
-                style={{
-                  background: 'var(--panel-2)',
-                  border: '1px solid var(--line)',
-                  borderRadius: 8,
-                  padding: '7px 10px',
-                  minWidth: 160,
-                }}
               />
+
+              {/* The amp cannot tell you how far the live sound has drifted from
+                  the preset it came from. This can, because it holds both. */}
+              {diff.count > 0 && (
+                <span
+                  className="changes"
+                  title={
+                    `The live sound differs from stored preset ${(diff.against ?? 0) + 1} in ` +
+                    `${diff.count} place${diff.count === 1 ? '' : 's'}. Storing to that slot would ` +
+                    `make these permanent.`
+                  }
+                >
+                  <span className="dot" />
+                  {/* Naming the preset matters: after you load a sound from a
+                      file, the amp still reports whichever slot is selected, and
+                      an unqualified "14 changes" reads as nonsense. */}
+                  {diff.count} vs preset {(diff.against ?? 0) + 1}
+                  <button type="button" className="small" onClick={() => amp.revertAll()}>
+                    Revert all
+                  </button>
+                </span>
+              )}
 
               <span className="sep" />
 
@@ -153,7 +227,7 @@ export function App() {
 
               {storing ? (
                 <>
-                  <span style={{ color: 'var(--bad)', fontSize: 13 }}>Overwrite which slot?</span>
+                  <span className="warn">Overwrite which slot?</span>
                   {Array.from({ length: HARDWARE_PRESETS }, (_, slot) => (
                     <button
                       key={slot}
@@ -180,10 +254,10 @@ export function App() {
               )}
 
               <span className="spacer" />
-              {snapshot.bpm !== null && (
-                <span style={{ color: 'var(--dim)', fontSize: 12 }}>{snapshot.bpm.toFixed(0)} BPM</span>
-              )}
+              {snapshot.bpm !== null && <span className="bpm">{snapshot.bpm.toFixed(0)} BPM</span>}
             </div>
+
+            <Library live={live} onSend={send} />
 
             <div className="chain">
               {live.pedals.map((pedal, slot) => (
@@ -191,9 +265,12 @@ export function App() {
                   key={slot}
                   slot={slot}
                   pedal={pedal}
+                  diff={slotDiff(diff, slot)}
                   onToggle={(s) => amp.toggleSlot(s)}
                   onSwap={(s, dsp) => amp.swapModel(s, dsp)}
                   onParam={(s, index, value) => amp.setParam(s, index, value)}
+                  onRevertParam={(s, index) => amp.revertParam(s, index)}
+                  onRevertSlot={(s) => amp.revertSlot(s)}
                 />
               ))}
             </div>
@@ -214,6 +291,8 @@ export function App() {
           }}
         />
       </main>
+
+      {dropping && <div className="dropzone">Drop a preset file to send it to the amp</div>}
     </>
   )
 }

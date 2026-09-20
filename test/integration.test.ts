@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { AmpController } from '../src/state/amp.js'
 import { MockTransport } from '../src/transport/mock.js'
-import { LIVE_CHANNEL } from '../src/protocol/catalog.js'
+
 import { samplePreset } from './helpers.js'
 
 /**
@@ -27,7 +27,7 @@ describe('connecting', () => {
       expect(snapshot.status).toBe('connected')
       expect(snapshot.deviceName).toBe('Spark 40 BLE')
       expect(snapshot.serial).toBe('MOCK-00000001')
-      expect(snapshot.presetNames).toEqual(['Clean Start', 'Crunch', 'Lead', 'Acoustic'])
+      expect(snapshot.stored.map((p) => p?.name)).toEqual(['Clean Start', 'Crunch', 'Lead', 'Acoustic'])
       expect(snapshot.currentPreset).toBe(0)
     })
   })
@@ -35,7 +35,7 @@ describe('connecting', () => {
   it('brings back a live sound with all seven slots', async () => {
     const { amp } = await connected()
     const live = amp.getSnapshot().live
-    expect(live?.channel).toBe(LIVE_CHANNEL)
+    expect(live?.live).toBe(true)
     expect(live?.pedals).toHaveLength(7)
     expect(live?.pedals.map((p) => p.name)).toContain('bias.reverb')
   })
@@ -117,7 +117,7 @@ describe('storing and uploading', () => {
     await vi.waitFor(() => expect(amp.getSnapshot().live?.name).toBe('Crunch'))
     amp.storeToSlot(3)
     await vi.waitFor(() => expect(mock.storedPresets[3]?.name).toBe('Crunch'))
-    await vi.waitFor(() => expect(amp.getSnapshot().presetNames[3]).toBe('Crunch'))
+    await vi.waitFor(() => expect(amp.getSnapshot().stored[3]?.name).toBe('Crunch'))
   })
 
   it('uploads a preset built from nothing, across several blocks', async () => {

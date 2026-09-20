@@ -10,14 +10,19 @@ import {
 } from '../protocol/catalog.js'
 import { REVERB_ROOMS, REVERB_TYPE_INDEX, labelSourceFor, reverbRoomFor } from '../protocol/knobs.js'
 import type { PedalState } from '../protocol/preset.js'
+import type { SlotDiff } from '../state/diff.js'
 import { Knob } from './Knob.js'
 
 interface Props {
   slot: number
   pedal: PedalState
+  /** What differs from the stored preset, or null when nothing does. */
+  diff: SlotDiff | null
   onToggle(slot: number): void
   onSwap(slot: number, dsp: string): void
   onParam(slot: number, index: number, value: number): void
+  onRevertParam(slot: number, index: number): void
+  onRevertSlot(slot: number): void
 }
 
 /**
@@ -27,7 +32,16 @@ interface Props {
  * which is how the amp's own knobs are marked. The conversion lives in
  * {@link Knob} and nowhere else.
  */
-export const SlotCard = memo(function SlotCard({ slot, pedal, onToggle, onSwap, onParam }: Props) {
+export const SlotCard = memo(function SlotCard({
+  slot,
+  pedal,
+  diff,
+  onToggle,
+  onSwap,
+  onParam,
+  onRevertParam,
+  onRevertSlot,
+}: Props) {
   const spec = slotSpec(slot)
   const isAmp = slot === AMP_SLOT
   const isReverb = pedal.name === 'bias.reverb'
@@ -36,9 +50,22 @@ export const SlotCard = memo(function SlotCard({ slot, pedal, onToggle, onSwap, 
   const labels = labelSourceFor(pedal.name)
 
   return (
-    <section className={`slot${pedal.on ? '' : ' bypassed'}${isAmp ? ' amp' : ''}`}>
+    <section
+      id={`slot-${slot}`}
+      className={`slot${pedal.on ? '' : ' bypassed'}${isAmp ? ' amp' : ''}${diff ? ' changed' : ''}`}
+    >
       <div className="slot-head">
         <h3 className="slot-kind">{spec.kind}</h3>
+        {diff && (
+          <button
+            type="button"
+            className="revert small"
+            onClick={() => onRevertSlot(slot)}
+            title={describeDiff(diff)}
+          >
+            revert
+          </button>
+        )}
         <button
           type="button"
           role="switch"
@@ -118,6 +145,8 @@ export const SlotCard = memo(function SlotCard({ slot, pedal, onToggle, onSwap, 
               label={knobLabel(slot, pedal.name, index)}
               named={knobIsNamed(slot, pedal.name, index)}
               value={value}
+              changed={diff?.params.includes(index) ?? false}
+              onRevert={() => onRevertParam(slot, index)}
               onChange={(next) => onParam(slot, index, next)}
             />
           )
@@ -128,3 +157,14 @@ export const SlotCard = memo(function SlotCard({ slot, pedal, onToggle, onSwap, 
     </section>
   )
 })
+
+/** Says what changed here, for the revert button's tooltip. */
+function describeDiff(diff: SlotDiff): string {
+  const parts: string[] = []
+  if (diff.modelChanged) parts.push('a different effect')
+  if (diff.bypassChanged) parts.push('switched the other way')
+  if (diff.params.length > 0) {
+    parts.push(`${diff.params.length} knob${diff.params.length === 1 ? '' : 's'} moved`)
+  }
+  return `Changed since the preset was stored: ${parts.join(', ')}. Put it back.`
+}

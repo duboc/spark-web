@@ -43,8 +43,14 @@ export interface AmpSnapshot {
   transportLabel: string | null
   deviceName: string | null
   serial: string | null
-  /** Names of the four hardware presets, as far as we have been told. */
-  presetNames: (string | null)[]
+  /**
+   * The four stored presets, whole, as far as we have been told.
+   *
+   * Kept complete rather than as names alone, because holding both these and
+   * the live sound is what lets the interface show what you have changed since
+   * the preset was stored. See state/diff.ts.
+   */
+  stored: (Preset | null)[]
   currentPreset: number | null
   /** The sound coming out of the amp right now. */
   live: Preset | null
@@ -62,7 +68,7 @@ const EMPTY: AmpSnapshot = {
   transportLabel: null,
   deviceName: null,
   serial: null,
-  presetNames: [null, null, null, null],
+  stored: [null, null, null, null],
   currentPreset: null,
   live: null,
   bpm: null,
@@ -216,6 +222,61 @@ export class AmpController {
     this.#send(cmd.requestLiveState())
   }
 
+  /* ── putting things back ────────────────────────────────────────────────── */
+
+  /**
+   * The stored preset the live sound is measured against.
+   *
+   * The amp reports which slot the live sound came from, so this is that slot's
+   * stored copy — not whichever preset button is lit, which can differ once you
+   * have stored to a different slot.
+   */
+  storedForLive(): Preset | null {
+    const live = this.#snapshot.live
+    if (!live) return null
+    return live.channel <= 3 ? this.#snapshot.stored[live.channel] ?? null : null
+  }
+
+  /** Put one parameter back to what the stored preset holds. */
+  revertParam(slot: number, index: number): void {
+    const stored = this.storedForLive()?.pedals[slot]
+    const live = this.#snapshot.live?.pedals[slot]
+    if (!stored || !live || stored.name !== live.name) return
+    const value = stored.params[index]
+    if (value === undefined) return
+    this.setParam(slot, index, value)
+  }
+
+  /** Put a whole slot back: its model, its bypass and every knob. */
+  revertSlot(slot: number): void {
+    const stored = this.storedForLive()?.pedals[slot]
+    const live = this.#snapshot.live?.pedals[slot]
+    if (!stored || !live) return
+
+    if (stored.name !== live.name) {
+      // Swapping brings a different set of parameters with it, so ask the amp
+      // what they are rather than writing values into a model that may not have
+      // them. The upload path would be wrong here too: it would revert the
+      // whole chain, not this slot.
+      this.swapModel(slot, stored.name)
+      this.#log('event', `reverting ${spec(slot)} to ${stored.name}`)
+      return
+    }
+
+    if (stored.on !== live.on) this.toggleSlot(slot)
+    stored.params.forEach((value, index) => {
+      if (Math.abs((live.params[index] ?? value) - value) > 5e-4) this.setParam(slot, index, value)
+    })
+  }
+
+  /** Put the whole sound back to the stored preset. */
+  revertAll(): void {
+    const stored = this.storedForLive()
+    if (!stored) return
+    for (let slot = 0; slot < stored.pedals.length; slot++) this.revertSlot(slot)
+    this.#log('event', `reverting to "${stored.name}"`)
+  }
+
   /**
    * Rename the live sound.
    *
@@ -276,14 +337,14 @@ export class AmpController {
     switch (message.type) {
       case 'preset': {
         const preset = message.preset
-        if (preset.channel <= 3) {
-          const names = [...this.#snapshot.presetNames]
-          names[preset.channel] = preset.name
-          this.#patch({ presetNames: names })
+        if (!preset.live && preset.channel <= 3) {
+          const stored = [...this.#snapshot.stored]
+          stored[preset.channel] = preset
+          this.#patch({ stored })
         }
         // The live sound is the one the interface edits. A stored preset only
         // becomes live when the amp says it has been selected.
-        if (preset.channel === LIVE_CHANNEL || this.#snapshot.live === null) {
+        if (preset.live || preset.channel === LIVE_CHANNEL || this.#snapshot.live === null) {
           this.#patch({ live: preset, bpm: preset.bpm })
         }
         if (!message.checksumOk) {
@@ -296,12 +357,12 @@ export class AmpController {
         this.#patch({ currentPreset: message.preset })
         if (message.type === 'presetButton') this.#send(cmd.requestLiveState())
         break
-      case 'presetStored': {
-        const names = [...this.#snapshot.presetNames]
-        names[message.slot] = this.#snapshot.live?.name ?? names[message.slot] ?? null
-        this.#patch({ presetNames: names })
+      case 'presetStored':
+        // Ask for it back rather than assuming what landed there: the stored
+        // copy is what future comparisons are measured against, so a guess here
+        // would quietly poison every diff afterwards.
+        this.#send(cmd.requestPreset(message.slot))
         break
-      }
       case 'effectToggled':
         this.#updatePedal(message.name, (pedal) => ({ ...pedal, on: message.on }))
         break
@@ -367,6 +428,10 @@ export class AmpController {
     this.#snapshot = { ...this.#snapshot, ...change }
     for (const listener of this.#subscribers) listener()
   }
+}
+
+function spec(slot: number): string {
+  return `slot ${slot + 1}`
 }
 
 function messageOf(error: unknown): string {

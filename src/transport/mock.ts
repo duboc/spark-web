@@ -20,7 +20,6 @@
 
 import { ChunkStream, encodeBlocksFromAmp, splitChunkData, type RawChunk } from '../protocol/frame.js'
 import { Reader, dec7, concat } from '../protocol/codec.js'
-import { LIVE_CHANNEL } from '../protocol/catalog.js'
 import { parsePreset, serializePreset, newUuid, type Preset } from '../protocol/preset.js'
 import { Listeners, type Transport, type TransportInfo, type TransportListener } from './types.js'
 
@@ -174,7 +173,10 @@ export class MockTransport implements Transport {
 
   #reset(): void {
     this.#presets = [0, 1, 2, 3].map(factoryPreset)
-    this.#live = { ...factoryPreset(0), channel: LIVE_CHANNEL }
+    // The live sound is marked by its lead byte and keeps the channel of the
+    // slot it came from, which is what a real Spark 40 reports. It is not
+    // channel 0x7f, whatever the community notes say.
+    this.#live = { ...factoryPreset(0), live: true, channel: 0 }
     this.#current = 0
     this.#uploads.clear()
   }
@@ -210,7 +212,7 @@ export class MockTransport implements Transport {
     this.#uploads.delete(chunk.seq)
     const preset = parsePreset(concat(entry.parts as Uint8Array[]))
     if (preset.channel <= 3) this.#presets[preset.channel] = preset
-    this.#live = { ...preset, channel: LIVE_CHANNEL }
+    this.#live = { ...preset, live: true, channel: preset.channel <= 3 ? preset.channel : this.#current }
     this.#reply(0x04, 0x01, new Uint8Array(0))
   }
 
@@ -244,7 +246,11 @@ export class MockTransport implements Transport {
     if (cmd === 0x03 && sub === 0x27) {
       r.u8()
       const slot = r.u8()
-      if (slot <= 3) this.#presets[slot] = { ...structuredCloneish(this.#live), channel: slot }
+      if (slot <= 3) {
+        const stored = structuredCloneish(this.#live)
+        delete stored.live
+        this.#presets[slot] = { ...stored, channel: slot }
+      }
       this.#reply(0x03, 0x27, Uint8Array.of(0x00, slot))
       return
     }
@@ -281,7 +287,7 @@ export class MockTransport implements Transport {
   #selectPreset(slot: number): void {
     if (slot > 3) return
     this.#current = slot
-    this.#live = { ...structuredCloneish(this.#presets[slot] as Preset), channel: LIVE_CHANNEL }
+    this.#live = { ...structuredCloneish(this.#presets[slot] as Preset), live: true, channel: slot }
   }
 
   #sendPreset(preset: Preset): void {

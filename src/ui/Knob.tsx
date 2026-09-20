@@ -6,6 +6,10 @@ interface Props {
   /** False when no source names this parameter, so the label is just its index. */
   named?: boolean
   disabled?: boolean
+  /** True when this differs from the stored preset. */
+  changed?: boolean
+  /** Put it back to the stored value. Absent when there is nothing to put back. */
+  onRevert?(): void
   onChange(value: number): void
 }
 
@@ -31,7 +35,15 @@ const TRAVEL = 180
  * It is a real slider to a screen reader: arrow keys step, Home and End jump to
  * the ends, and the value is announced as it reads on the amp, 0 to 10.
  */
-export function Knob({ label, value, named = true, disabled = false, onChange }: Props) {
+export function Knob({
+  label,
+  value,
+  named = true,
+  disabled = false,
+  changed = false,
+  onRevert,
+  onChange,
+}: Props) {
   const id = useId()
   const [dragging, setDragging] = useState(false)
   const origin = useRef({ y: 0, value: 0 })
@@ -93,7 +105,7 @@ export function Knob({ label, value, named = true, disabled = false, onChange }:
   const shown = (value * 10).toFixed(1)
 
   return (
-    <div className={`knob${disabled ? ' disabled' : ''}`}>
+    <div className={`knob${disabled ? ' disabled' : ''}${changed ? ' changed' : ''}`}>
       <svg
         viewBox="0 0 48 48"
         className={`dial${dragging ? ' dragging' : ''}`}
@@ -122,10 +134,25 @@ export function Knob({ label, value, named = true, disabled = false, onChange }:
           className="pointer"
         />
       </svg>
-      <span className={`knob-label${named ? '' : ' unnamed'}`} id={id} title={named ? label : 'No source names this parameter'}>
+      <span
+        className={`knob-label${named ? '' : ' unnamed'}`}
+        id={id}
+        title={named ? label : 'No source names this parameter'}
+      >
         {label}
       </span>
-      <span className="knob-value">{shown}</span>
+      <span className="knob-value">
+        {shown}
+        {changed && onRevert && (
+          <button
+            type="button"
+            className="revert-dot"
+            onClick={onRevert}
+            title="Changed since the preset was stored. Put it back."
+            aria-label={`Revert ${label}`}
+          />
+        )}
+      </span>
     </div>
   )
 }
