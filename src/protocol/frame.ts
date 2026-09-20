@@ -100,6 +100,63 @@ export interface EncodeOptions {
   seq?: number
 }
 
+/** Split a payload into the chunks that carry it, each already framed. */
+export function buildChunks(
+  cmd: number,
+  sub: number,
+  payload: Uint8Array | readonly number[],
+  seq: number = FIXED_SEQ,
+): Uint8Array[] {
+  const data = payload instanceof Uint8Array ? payload : Uint8Array.from(payload)
+
+  if (data.length <= MAX_CHUNK_DATA) {
+    return [buildChunk(cmd, sub, FIXED_SEQ, enc7(data), null)]
+  }
+
+  const total = Math.ceil(data.length / MAX_CHUNK_DATA)
+  if (total > 0x7f) {
+    throw new RangeError(`payload of ${data.length} bytes needs ${total} chunks, more than 127`)
+  }
+
+  return Array.from({ length: total }, (_, index) => {
+    const slice = data.subarray(index * MAX_CHUNK_DATA, (index + 1) * MAX_CHUNK_DATA)
+    return buildChunk(cmd, sub, seq & 0x7f, enc7(slice), [total, index, slice.length])
+  })
+}
+
+/**
+ * Frame a message the way the amp does: blocks capped at
+ * {@link MAX_BLOCK_FROM_AMP}, which is smaller than a full chunk, so chunks
+ * spill across block boundaries.
+ *
+ * Only the mock transport and the tests send in this direction. It exists
+ * because "a chunk can straddle a block boundary" is the single most awkward
+ * property of the receive path, and a mock that never produces one would let
+ * that bug through.
+ */
+export function encodeBlocksFromAmp(
+  cmd: number,
+  sub: number,
+  payload: Uint8Array | readonly number[],
+  options: EncodeOptions = {},
+): Uint8Array[] {
+  const stream = concat(buildChunks(cmd, sub, payload, options.seq ?? FIXED_SEQ))
+  const capacity = MAX_BLOCK_FROM_AMP - BLOCK_HEADER_SIZE
+  const blocks: Uint8Array[] = []
+
+  for (let at = 0; at < stream.length; at += capacity) {
+    const slice = stream.subarray(at, at + capacity)
+    const block = new Uint8Array(BLOCK_HEADER_SIZE + slice.length)
+    block.set(BLOCK_START, 0)
+    block.set(DIR_FROM_AMP, 4)
+    block[6] = block.length
+    block.set(slice, BLOCK_HEADER_SIZE)
+    blocks.push(block)
+  }
+
+  return blocks
+}
+
 /**
  * Frame a command into one or more blocks, ready to write to the amp.
  *
@@ -113,29 +170,9 @@ export function encodeBlocks(
   payload: Uint8Array | readonly number[],
   options: EncodeOptions = {},
 ): Uint8Array[] {
-  const data = payload instanceof Uint8Array ? payload : Uint8Array.from(payload)
-
-  if (data.length <= MAX_CHUNK_DATA) {
-    return [wrapBlock(buildChunk(cmd, sub, FIXED_SEQ, enc7(data), null))]
-  }
-
-  const total = Math.ceil(data.length / MAX_CHUNK_DATA)
-  if (total > 0x7f) {
-    throw new RangeError(`payload of ${data.length} bytes needs ${total} chunks, more than 127`)
-  }
-
-  const seq = (options.seq ?? FIXED_SEQ) & 0x7f
-  const blocks: Uint8Array[] = []
-
-  for (let index = 0; index < total; index++) {
-    const slice = data.subarray(index * MAX_CHUNK_DATA, (index + 1) * MAX_CHUNK_DATA)
-    const encoded = enc7(slice)
-    blocks.push(
-      wrapBlock(buildChunk(cmd, sub, seq, encoded, [total, index, slice.length])),
-    )
-  }
-
-  return blocks
+  // One chunk per block. A maximum chunk fills a maximum block exactly, so
+  // nothing sent to the amp ever needs to straddle a block boundary.
+  return buildChunks(cmd, sub, payload, options.seq ?? FIXED_SEQ).map(wrapBlock)
 }
 
 function buildChunk(
