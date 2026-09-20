@@ -216,6 +216,19 @@ export class AmpController {
     this.#send(cmd.requestLiveState())
   }
 
+  /**
+   * Rename the live sound.
+   *
+   * There is no command for a name on its own, so this uploads the whole preset
+   * with the new name. That is also why the name only reaches the amp when you
+   * commit the edit rather than on every keystroke.
+   */
+  renameLive(name: string): void {
+    const live = this.#snapshot.live
+    if (!live || live.name === name || name.trim() === '') return
+    this.uploadPreset({ ...live, name })
+  }
+
   /** Send a whole preset — the path that makes a preset held in a file audible. */
   uploadPreset(preset: Preset, channel = LIVE_CHANNEL): void {
     const target: Preset = { ...preset, channel }
