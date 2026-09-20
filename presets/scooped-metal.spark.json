@@ -1,0 +1,18 @@
+{
+  "channel": 3,
+  "uuid": "5c1e9a10-0004-4000-8000-000000000004",
+  "name": "Scooped Metal",
+  "version": "0.7",
+  "description": "Mesa-flavoured rhythm in the style of Metallica. Scooped mids, a Tube Screamer set as a tightener rather than a drive, and a gate that shuts hard.",
+  "icon": "icon.png",
+  "bpm": 120,
+  "pedals": [
+    { "name": "bias.noisegate", "on": true, "params": [0.2, 0, 1] },
+    { "name": "Compressor", "on": false, "params": [0.65, 0.36] },
+    { "name": "DistortionTS9", "on": true, "params": [0.05, 0.6, 0.65] },
+    { "name": "Rectifier", "on": true, "params": [0.8, 0.75, 0.2, 0.65, 0.6] },
+    { "name": "Phaser", "on": false, "params": [0.34, 0.61] },
+    { "name": "DelayMono", "on": false, "params": [0.19, 0.24, 0.52, 0.6, 1] },
+    { "name": "bias.reverb", "on": true, "params": [0.1, 0.24, 0.5, 0.5, 0.34, 0.64, 0] }
+  ]
+}

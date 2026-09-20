@@ -1,0 +1,18 @@
+{
+  "channel": 2,
+  "uuid": "5c1e9a10-0003-4000-8000-000000000003",
+  "name": "Stack Lead",
+  "version": "0.7",
+  "description": "JCM800 in the style of Guns N' Roses. A clean boost into a mids-forward Marshall, gate for the noise that brings.",
+  "icon": "icon.png",
+  "bpm": 120,
+  "pedals": [
+    { "name": "bias.noisegate", "on": true, "params": [0.1, 0, 1] },
+    { "name": "Compressor", "on": false, "params": [0.43, 0.5] },
+    { "name": "Booster", "on": true, "params": [0.35] },
+    { "name": "JCM800", "on": true, "params": [0.7, 0.65, 0.65, 0.5, 0.6] },
+    { "name": "Cloner", "on": false, "params": [0.19, 0] },
+    { "name": "DelayMono", "on": true, "params": [0.15, 0.2, 0.5, 0.2, 1] },
+    { "name": "bias.reverb", "on": true, "params": [0.2, 0.55, 0.6, 0.3, 0.47, 0.43, 0.6] }
+  ]
+}

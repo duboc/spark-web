@@ -1,0 +1,18 @@
+{
+  "channel": 1,
+  "uuid": "5c1e9a10-0002-4000-8000-000000000002",
+  "name": "Indie Crunch",
+  "version": "0.7",
+  "description": "AC30 bite in the style of Arctic Monkeys. A Tube Screamer pushing a bright amp, short slapback, small room.",
+  "icon": "icon.png",
+  "bpm": 120,
+  "pedals": [
+    { "name": "bias.noisegate", "on": true, "params": [0.12, 0.06, 0] },
+    { "name": "Compressor", "on": false, "params": [0.3, 0.52] },
+    { "name": "DistortionTS9", "on": true, "params": [0.35, 0.6, 0.55] },
+    { "name": "AC Boost", "on": true, "params": [0.6, 0.65, 0.55, 0.4, 0.55] },
+    { "name": "Flanger", "on": false, "params": [0.41, 0.66, 0.65] },
+    { "name": "DelayMono", "on": true, "params": [0.15, 0.15, 0.3, 0.6, 1] },
+    { "name": "bias.reverb", "on": true, "params": [0.25, 0.6, 0.55, 0.35, 0.5, 0.45, 0.2] }
+  ]
+}
