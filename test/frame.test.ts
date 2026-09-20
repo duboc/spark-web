@@ -5,7 +5,6 @@ import {
   CHUNK_HEADER_SIZE,
   ChunkStream,
   DIR_FROM_AMP,
-  FIXED_CHECKSUM,
   FIXED_SEQ,
   MAX_BLOCK_TO_AMP,
   MAX_CHUNK_DATA,
@@ -14,14 +13,15 @@ import {
   splitChunkData,
   xorChecksum,
 } from '../src/protocol/frame.js'
-import { concat, dec7, enc7, enc7Length, hex } from '../src/protocol/codec.js'
+import { concat, dec7, enc7, enc7Length, fromHex, hex } from '../src/protocol/codec.js'
 
 describe('encodeBlocks', () => {
   it('frames a short command as one block', () => {
     const [block] = encodeBlocks(0x01, 0x38, [0x00, 0x02])
     expect(block).toBeDefined()
+    // Byte 19 is the checksum: the exclusive or of `00 00 02`, which is 02.
     expect(hex(block as Uint8Array)).toBe(
-      '01 fe 00 00 53 fe 1a 00 00 00 00 00 00 00 00 00 f0 01 3a 15 01 38 00 00 02 f7',
+      '01 fe 00 00 53 fe 1a 00 00 00 00 00 00 00 00 00 f0 01 3a 02 01 38 00 00 02 f7',
     )
   })
 
@@ -30,11 +30,16 @@ describe('encodeBlocks', () => {
     expect((block as Uint8Array)[6]).toBe((block as Uint8Array).length)
   })
 
-  it('keeps the known-good sequence and checksum on single-chunk commands', () => {
+  it('sends the sequence byte the amp itself uses', () => {
     const [block] = encodeBlocks(0x02, 0x10, [])
+    expect((block as Uint8Array)[BLOCK_HEADER_SIZE + 2]).toBe(FIXED_SEQ)
+  })
+
+  it('computes the checksum as the exclusive or of the body, as the amp does', () => {
+    const [block] = encodeBlocks(0x01, 0x04, [0x81, 0x02, 0x03])
     const b = block as Uint8Array
-    expect(b[BLOCK_HEADER_SIZE + 2]).toBe(FIXED_SEQ)
-    expect(b[BLOCK_HEADER_SIZE + 3]).toBe(FIXED_CHECKSUM)
+    const body = b.slice(BLOCK_HEADER_SIZE + CHUNK_HEADER_SIZE, -1)
+    expect(b[BLOCK_HEADER_SIZE + 3]).toBe(xorChecksum(body))
   })
 
   it('omits the multi-chunk header when the payload fits one chunk', () => {
@@ -88,57 +93,65 @@ describe('the size arithmetic around the multi-chunk header', () => {
     }
   })
 
-  it('numbers the chunks and shares one sequence across them', () => {
+  it('numbers the chunks, with the header inside the encoded region', () => {
     const blocks = encodeBlocks(0x01, 0x01, new Uint8Array(MAX_CHUNK_DATA * 2 + 5), { seq: 0x22 })
     expect(blocks).toHaveLength(3)
     blocks.forEach((block, i) => {
       expect(block[BLOCK_HEADER_SIZE + 2], 'sequence').toBe(0x22)
-      const header = block.slice(BLOCK_HEADER_SIZE + CHUNK_HEADER_SIZE, BLOCK_HEADER_SIZE + CHUNK_HEADER_SIZE + 3)
-      expect(header[0], 'total').toBe(3)
-      expect(header[1], 'index').toBe(i)
+      const decoded = dec7(block.slice(BLOCK_HEADER_SIZE + CHUNK_HEADER_SIZE, -1))
+      expect(decoded[0], 'total').toBe(3)
+      expect(decoded[1], 'index').toBe(i)
+      expect(decoded[2], 'count').toBe(decoded.length - 3)
     })
   })
 
   it('reassembles into the payload it started from', () => {
     const payload = Uint8Array.from({ length: 500 }, (_, i) => (i * 13) & 0xff)
     const parts = encodeBlocks(0x01, 0x01, payload).map((block) => {
-      const body = block.slice(BLOCK_HEADER_SIZE + CHUNK_HEADER_SIZE, -1)
-      return dec7(splitChunkData(body).encoded)
+      const decoded = dec7(block.slice(BLOCK_HEADER_SIZE + CHUNK_HEADER_SIZE, -1))
+      return splitChunkData(decoded).data
     })
     expect(concat(parts)).toEqual(payload)
   })
 })
 
 describe('splitChunkData', () => {
-  it('recognises a header whose count matches the encoded data', () => {
-    const encoded = enc7(new Uint8Array(20))
-    const body = concat([Uint8Array.from([3, 1, encoded.length]), encoded])
-    const split = splitChunkData(body)
-    expect(split).toMatchObject({ total: 3, index: 1, hasHeader: true })
-    expect(split.encoded).toEqual(encoded)
-  })
+  // It takes decoded bytes. The header travels inside the 7-bit encoded region,
+  // which a capture from a real amp settles: see test/hardware.test.ts.
+  const data = Uint8Array.from({ length: 20 }, (_, i) => i)
 
-  it('recognises a header whose count is the raw data length instead', () => {
-    const encoded = enc7(new Uint8Array(20))
-    const body = concat([Uint8Array.from([3, 1, 20]), encoded])
-    expect(splitChunkData(body)).toMatchObject({ total: 3, index: 1, hasHeader: true })
+  it('recognises a header whose count matches the data after it', () => {
+    const split = splitChunkData(concat([Uint8Array.from([3, 1, data.length]), data]))
+    expect(split).toMatchObject({ total: 3, index: 1, hasHeader: true })
+    expect(split.data).toEqual(data)
   })
 
   it('reports no header when the index is not below the total', () => {
-    const encoded = enc7(new Uint8Array(20))
-    const body = concat([Uint8Array.from([2, 2, encoded.length]), encoded])
-    expect(splitChunkData(body).hasHeader).toBe(false)
+    expect(splitChunkData(concat([Uint8Array.from([2, 2, data.length]), data])).hasHeader).toBe(false)
   })
 
-  it('reports no header when the count matches nothing', () => {
-    const encoded = enc7(new Uint8Array(20))
-    const body = concat([Uint8Array.from([2, 0, 99]), encoded])
-    expect(splitChunkData(body).hasHeader).toBe(false)
+  it('reports no header when the count does not match what follows', () => {
+    expect(splitChunkData(concat([Uint8Array.from([2, 0, 99]), data])).hasHeader).toBe(false)
   })
 
-  it('leaves a short body alone', () => {
-    const body = Uint8Array.from([0x00, 0x01])
-    expect(splitChunkData(body)).toMatchObject({ total: 1, index: 0, hasHeader: false })
+  it('reports no header when the total says one chunk', () => {
+    // A single chunk never carries a header, so a leading 1 is data.
+    expect(splitChunkData(concat([Uint8Array.from([1, 0, data.length]), data])).hasHeader).toBe(false)
+  })
+
+  it('leaves a short payload alone', () => {
+    expect(splitChunkData(Uint8Array.from([0x00, 0x01]))).toMatchObject({
+      total: 1,
+      index: 0,
+      hasHeader: false,
+    })
+  })
+
+  it('does not mistake a real single-chunk reply for a header', () => {
+    // The amp's name decodes to this. It would claim eight chunks, this being
+    // number 168 of them.
+    const ampName = fromHex('08 a8 53 70 61 72 6b 20 34 30')
+    expect(splitChunkData(ampName).hasHeader).toBe(false)
   })
 })
 

@@ -162,24 +162,35 @@ describe('MessageAssembler', () => {
     expect(assembler.accept(chunks[chunks.length - 1] as RawChunk)).toMatchObject({ type: 'preset' })
   })
 
-  it('keeps two interleaved messages apart by their sequence byte', () => {
+  it('reads two presets arriving one after the other', () => {
+    // Partial messages are keyed by command and sub-command, because the
+    // sequence byte is the same on everything the amp sends and cannot group
+    // anything. Two presets therefore have to arrive in sequence, which is what
+    // the amp does — see test/hardware.test.ts, where fifteen consecutive
+    // preset replies never overlap.
     const a = quantizePreset(samplePreset({ name: 'Alpha', channel: 0 }))
     const b = quantizePreset(samplePreset({ name: 'Beta', channel: 1 }))
-    const chunksA = chunksFor(0x03, 0x01, serializePreset(a), 0x21)
-    const chunksB = chunksFor(0x03, 0x01, serializePreset(b), 0x22)
 
     const assembler = new MessageAssembler()
-    const interleaved: RawChunk[] = []
-    const longest = Math.max(chunksA.length, chunksB.length)
-    for (let i = 0; i < longest; i++) {
-      if (chunksA[i]) interleaved.push(chunksA[i] as RawChunk)
-      if (chunksB[i]) interleaved.push(chunksB[i] as RawChunk)
-    }
-
     const names = assembler
-      .acceptAll(interleaved)
+      .acceptAll([...chunksFor(0x03, 0x01, serializePreset(a)), ...chunksFor(0x03, 0x01, serializePreset(b))])
       .map((m) => (m.type === 'preset' ? m.preset.name : m.type))
-    expect(names.sort()).toEqual(['Alpha', 'Beta'])
+
+    expect(names).toEqual(['Alpha', 'Beta'])
+  })
+
+  it('keeps different kinds of message apart while both are in flight', () => {
+    const preset = chunksFor(0x03, 0x01, serializePreset(quantizePreset(samplePreset())))
+    const assembler = new MessageAssembler()
+
+    assembler.accept(preset[0] as RawChunk)
+    // A short reply lands in the middle of a preset and must not disturb it.
+    expect(assembler.acceptAll(chunksFor(0x03, 0x10, fromHex('00 02')))).toEqual([
+      { type: 'presetNumber', preset: 2 },
+    ])
+    const rest = assembler.acceptAll(preset.slice(1))
+    expect(rest).toHaveLength(1)
+    expect(rest[0]).toMatchObject({ type: 'preset' })
   })
 
   it('starts a fresh message when a new chunk zero arrives mid-flight', () => {

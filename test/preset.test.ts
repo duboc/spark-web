@@ -73,9 +73,11 @@ describe('checksum', () => {
     expect(parsed.checksum).toBe(parsed.expectedChecksum)
   })
 
-  it('counts every byte after the channel, substituting cc above 127', () => {
+  it('sums every byte after the channel, with no substitution above 127', () => {
+    // The community rule substitutes 0xCC for any byte above 127. Real presets
+    // say otherwise: see test/hardware.test.ts.
     const bytes = Uint8Array.from([0x00, 0x7f, 0x01, 0x02, 0xff])
-    expect(presetChecksum(bytes)).toBe((0x01 + 0x02 + 0xcc) & 0xff)
+    expect(presetChecksum(bytes)).toBe((0x01 + 0x02 + 0xff) & 0xff)
   })
 
   it('ignores the leading byte and the channel', () => {
@@ -97,10 +99,17 @@ describe('checksum', () => {
 })
 
 describe('malformed presets', () => {
-  it('rejects one that does not start with 00', () => {
+  it('rejects one whose lead byte is neither 00 nor 01', () => {
     const bytes = serializePreset(quantizePreset(samplePreset()))
-    bytes[0] = 0x01
+    bytes[0] = 0x02
     expect(() => parsePreset(bytes)).toThrow(ProtocolError)
+  })
+
+  it('reads 01 as the live state and round-trips it', () => {
+    const live = quantizePreset(samplePreset({ live: true, channel: 0 }))
+    const parsed = parsePreset(serializePreset(live))
+    expect(parsed.live).toBe(true)
+    expect(parsed).toEqual(live)
   })
 
   it('rejects a truncated preset instead of inventing the rest', () => {

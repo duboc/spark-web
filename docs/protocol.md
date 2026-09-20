@@ -58,7 +58,12 @@ last   f7         terminator
 ```
 
 A chunk carries at most 128 data bytes before encoding. Multi-chunk messages
-prefix each chunk's data with three more bytes: `[total, index, count]`.
+prefix each chunk's data with three more bytes: `[total, index, count]`, and
+those three go through the encoder with the data. You decode first, then read
+the header. `count` counts decoded bytes. Single-chunk messages carry no header.
+
+Byte 3 is the exclusive or of the chunk body; the amp computes it. Byte 2, the
+sequence, is `3a` on everything in both directions, so it groups nothing.
 
 A block from the amp is smaller than a full chunk, so chunks straddle block
 boundaries. Buffer the whole byte stream, strip the 16-byte block headers, then
@@ -143,8 +148,8 @@ waits for one.
 ## The preset
 
 ```
-00              fixed
-channel         00-03 for a hardware slot, 7f for the live sound
+00 or 01        00 on a stored preset, 01 on the live state
+channel         00-03 for a hardware slot
 uuid            string, 36 characters
 name            string
 version         string
@@ -165,9 +170,10 @@ extra gain      float, on some presets
 checksum        one byte
 ```
 
-The checksum sums every byte after the channel, modulo 256, adding `0xCC` in
-place of any byte above 127. The amp tolerates a wrong value. The official app
-does not.
+The checksum sums every byte after the channel, modulo 256. Community notes add
+a clause substituting `0xCC` for any byte above 127; that clause is wrong on the
+firmware captured here. The amp tolerates a wrong value. The official app does
+not.
 
 ## The signal chain
 
@@ -184,11 +190,12 @@ them.
 | 5 | Delay |
 | 6 | Reverb |
 
-The amp's knobs are index 0 gain, 1 treble, 2 mid, 3 bass, 4 master. No other
-effect's parameters are documented. See question 5 in `docs/open-questions.md`.
+The amp's knobs are index 0 gain, 1 treble, 2 mid, 3 bass, 4 master.
+`src/protocol/knobs.ts` carries labels for the other effects, with a note on
+where each one comes from and how far to trust it.
 
 Reverb is always `bias.reverb`. The room is a float in parameter index 6 rather
-than a model swap.
+than a model swap. `REVERB_ROOMS` lists the nine values.
 
 ## Model names
 

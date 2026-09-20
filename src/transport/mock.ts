@@ -168,8 +168,8 @@ export class MockTransport implements Transport {
   }
 
   #handle(chunk: RawChunk): void {
-    const split = splitChunkData(chunk.body)
-    const data = dec7(split.encoded)
+    const split = splitChunkData(dec7(chunk.body))
+    const data = split.data
 
     if (chunk.cmd === 0x01 && chunk.sub === 0x01) {
       this.#collectUpload(chunk, split.total, split.index, data)

@@ -44,7 +44,20 @@ export interface PedalState {
 }
 
 export interface Preset {
-  /** 0-3 for a hardware slot, 0x7f for the live sound. */
+  /**
+   * Whether this is the amp's live state rather than a stored preset.
+   *
+   * It is the byte before the channel: 0 on a reply about a stored preset, 1 on
+   * a reply to a live-state request. Both were observed on real hardware. What
+   * the amp does with the byte on a preset you *send* is untested, so uploads
+   * write 0, which is what a stored preset carries.
+   */
+  live?: boolean
+  /**
+   * 0-3 for a hardware slot. Community notes describe 0x7f as meaning the live
+   * sound; the captured amp instead reports the slot the live sound came from
+   * and sets {@link live}. Both are accepted.
+   */
   channel: number
   uuid: string
   name: string
@@ -58,21 +71,21 @@ export interface Preset {
 }
 
 /**
- * The trailing checksum byte: every byte after the channel summed modulo 256,
- * with any byte above 127 contributing 0xCC instead of itself.
+ * The trailing checksum byte: every byte after the channel, summed modulo 256.
  *
- * The amp tolerates a wrong value here; the official app does not, so presets we
- * write should still carry a correct one. The rule itself comes from community
- * notes and has not been checked against a preset captured from hardware — when
- * the first real capture lands, verify the stored byte against this function
- * before trusting either.
+ * Community notes add a clause that says any byte above 127 contributes 0xCC
+ * instead of itself. That clause is wrong, at least for the firmware captured
+ * here. The two rules genuinely differ — a preset is full of bytes above 127,
+ * such as the `d9` and `ca` type tags — and the plain sum reproduces the stored
+ * byte on all five distinct presets in `test/fixtures/`, while the 0xCC variant
+ * reproduces none of them.
+ *
+ * The amp tolerates a wrong value. The official app does not, so presets this
+ * writes still carry a correct one.
  */
 export function presetChecksum(bytes: Uint8Array, from = 2, to = bytes.length): number {
   let sum = 0
-  for (let i = from; i < to; i++) {
-    const b = bytes[i] as number
-    sum += b > 127 ? 0xcc : b
-  }
+  for (let i = from; i < to; i++) sum += bytes[i] as number
   return sum & 0xff
 }
 
@@ -89,8 +102,8 @@ export function parsePresetDetailed(data: Uint8Array): ParsedPreset {
   const r = new Reader(data)
 
   const lead = r.u8('preset lead byte')
-  if (lead !== 0x00) {
-    throw new ProtocolError(`preset should start with 00, got ${lead.toString(16)}`, 0)
+  if (lead !== 0x00 && lead !== 0x01) {
+    throw new ProtocolError(`preset should start with 00 or 01, got ${lead.toString(16)}`, 0)
   }
 
   const channel = r.u8('channel')
@@ -137,6 +150,7 @@ export function parsePresetDetailed(data: Uint8Array): ParsedPreset {
   const checksum = r.remaining > 0 ? r.u8('checksum') : 0
 
   const preset: Preset = {
+    ...(lead === 0x01 ? { live: true } : {}),
     channel,
     uuid,
     name,
@@ -164,7 +178,7 @@ export function parsePreset(data: Uint8Array): Preset {
 export function serializePreset(preset: Preset): Uint8Array {
   const w = new Writer()
 
-  w.u8(0x00, preset.channel & 0xff)
+  w.u8(preset.live ? 0x01 : 0x00, preset.channel & 0xff)
   w.str(preset.uuid)
   w.str(preset.name)
   w.str(preset.version)

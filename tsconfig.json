@@ -5,7 +5,7 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
-    "types": ["web-bluetooth", "vite/client"],
+    "types": ["node", "web-bluetooth", "vite/client"],
 
     "strict": true,
     "noUncheckedIndexedAccess": true,
@@ -20,5 +20,5 @@
     "resolveJsonModule": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src", "test", "vite.config.ts"]
+  "include": ["src", "test", "tools", "vite.config.ts"]
 }

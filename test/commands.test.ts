@@ -137,9 +137,9 @@ describe('preset upload', () => {
     expect(new Set(chunks.map((c) => c.seq))).toEqual(new Set([0x51]))
 
     const parts = chunks.map((chunk) => {
-      const split = splitChunkData(chunk.body)
+      const split = splitChunkData(dec7(chunk.body))
       expect(split.hasHeader).toBe(true)
-      return dec7(split.encoded)
+      return split.data
     })
 
     const payload = concat(parts)

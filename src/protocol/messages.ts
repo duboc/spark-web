@@ -119,9 +119,12 @@ export function describe(message: AmpMessage): string {
 /**
  * Collects chunks into whole messages.
  *
- * Presets arrive split across several chunks that share a sequence byte; that
- * byte is what groups them, so partial messages are held per sequence until the
- * last chunk shows up.
+ * Partial messages are keyed by command and sub-command, not by the sequence
+ * byte. The sequence byte looks like it should group a message's chunks and does
+ * not: across a capture of fifteen consecutive preset replies, every chunk in
+ * every direction carried `3a`. Keying by it would have worked only because the
+ * amp never has two messages of one kind in flight at once, which is luck rather
+ * than design.
  */
 export class MessageAssembler {
   readonly #pending = new Map<
@@ -136,28 +139,29 @@ export class MessageAssembler {
 
   /** Feed one chunk; get a message back once one is complete. */
   accept(chunk: RawChunk): AmpMessage | null {
-    const { total, index, encoded } = splitChunkData(chunk.body)
-    const part = dec7(encoded)
+    // Decode before looking for the header: it travels inside the encoded region.
+    const { total, index, data } = splitChunkData(dec7(chunk.body))
 
     if (total <= 1) {
-      return decodeMessage(chunk.cmd, chunk.sub, part)
+      return decodeMessage(chunk.cmd, chunk.sub, data)
     }
 
-    let entry = this.#pending.get(chunk.seq)
-    if (!entry || index === 0) {
+    const key = (chunk.cmd << 8) | chunk.sub
+    let entry = this.#pending.get(key)
+    if (!entry || index === 0 || entry.total !== total) {
       entry = { cmd: chunk.cmd, sub: chunk.sub, total, parts: new Array(total).fill(undefined), received: 0 }
-      this.#pending.set(chunk.seq, entry)
+      this.#pending.set(key, entry)
     }
     if (index >= entry.total) return null
     // Count only the first arrival of each index. A missing chunk must leave the
     // message incomplete rather than silently assembling around the hole — note
     // that a sparse array's `every` skips holes and would call this complete.
     if (entry.parts[index] === undefined) entry.received++
-    entry.parts[index] = part
+    entry.parts[index] = data
 
     if (entry.received < entry.total) return null
 
-    this.#pending.delete(chunk.seq)
+    this.#pending.delete(key)
     return decodeMessage(entry.cmd, entry.sub, concat(entry.parts as Uint8Array[]))
   }
 

@@ -26,34 +26,30 @@
  *   last  f7           terminator
  * ```
  *
- * ## Where the multi-chunk header lives — still open
+ * ## Where the multi-chunk header lives — settled, from hardware
  *
- * Multi-chunk messages prefix each chunk's data with `[total, index, count]`.
- * Sources disagree on whether those three bytes sit inside or outside the 7-bit
- * encoded region, and it is tempting to think the stated size limits settle it.
- * They do not. Both readings land on exactly the documented ceiling:
+ * Multi-chunk messages prefix each chunk's data with `[total, index, count]`,
+ * and those three bytes sit **inside** the 7-bit encoded region. You decode
+ * first, then read the header.
+ *
+ * The size limits look as though they settle this, and they do not. Both layouts
+ * land on exactly the documented ceiling, because 128 and 131 raw bytes both
+ * encode into nineteen groups:
  *
  * ```
  *   outside:  16 + 6 + 3 + enc7Length(128)     + 1 = 16 + 6 + 3 + 147 + 1 = 173
  *   inside:   16 + 6     + enc7Length(128 + 3) + 1 = 16 + 6     + 150 + 1 = 173
  * ```
  *
- * The coincidence is real: 128 and 131 raw bytes both encode into nineteen
- * groups, so the three header bytes cost three either way. A maximum chunk is
- * 128 data bytes and fills a maximum block exactly under both hypotheses. The
- * arithmetic constrains the chunk size and nothing else.
+ * A capture from a real Spark 40 settles it instead. Every chunk of a preset
+ * reply decodes to bytes that begin `0f 00 19`, `0f 01 19`, `0f 02 19` and so
+ * on: fifteen chunks, numbered in order, each declaring 25 data bytes. Each one
+ * decodes to exactly 28 bytes, which is three header bytes plus the 25 it
+ * declares. The data after the header begins `00 00 d9 24`, which is the lead
+ * byte, channel 0 and a 36-character string — precisely how a preset starts.
  *
- * So the two directions are handled differently, and deliberately:
- *
- *  - **Sending** follows the prior-art convention — header raw, outside the
- *    encoded region — because that is what the working clients this protocol was
- *    reconstructed from do, and the amp accepts their uploads.
- *  - **Receiving** detects it from the bytes. See {@link splitChunkData}.
- *
- * Whether single-chunk messages from the amp carry the header at all is equally
- * unsettled. Both questions want one capture from real hardware, after which the
- * detection can be replaced by a constant. Until then, nothing here should be
- * mistaken for a proof.
+ * So `count` counts *decoded* bytes after the header, and single-chunk messages
+ * carry no header at all. `test/fixtures/` holds the capture this comes from.
  */
 
 import { ProtocolError, concat, dec7Length, enc7, enc7Length } from './codec.js'
@@ -77,16 +73,14 @@ export const CHUNK_START = [0xf0, 0x01] as const
 export const CHUNK_END = 0xf7
 
 /**
- * Sequence and checksum bytes used for single-chunk commands.
+ * The sequence byte.
  *
- * `3a 15` is a fixed literal that working clients have sent for years, so it is
- * known to be accepted. The amp is reported not to validate either byte. We keep
- * the known-good literal for single-chunk commands rather than computing
- * something that is probably equivalent, and compute properly for multi-chunk
- * messages, where the sequence genuinely has to group the chunks together.
+ * `3a` is what working clients have always sent, and a capture shows the amp
+ * sends `3a` on everything too — including all fifteen chunks of a preset. So it
+ * does not group a message's chunks, whatever the name suggests. The header
+ * inside each chunk does that.
  */
 export const FIXED_SEQ = 0x3a
-export const FIXED_CHECKSUM = 0x15
 
 /** XOR of every byte — the checksum the chunk header carries. */
 export function xorChecksum(bytes: Uint8Array | readonly number[]): number {
@@ -110,7 +104,7 @@ export function buildChunks(
   const data = payload instanceof Uint8Array ? payload : Uint8Array.from(payload)
 
   if (data.length <= MAX_CHUNK_DATA) {
-    return [buildChunk(cmd, sub, FIXED_SEQ, enc7(data), null)]
+    return [buildChunk(cmd, sub, FIXED_SEQ, enc7(data))]
   }
 
   const total = Math.ceil(data.length / MAX_CHUNK_DATA)
@@ -120,7 +114,10 @@ export function buildChunks(
 
   return Array.from({ length: total }, (_, index) => {
     const slice = data.subarray(index * MAX_CHUNK_DATA, (index + 1) * MAX_CHUNK_DATA)
-    return buildChunk(cmd, sub, seq & 0x7f, enc7(slice), [total, index, slice.length])
+    // The header goes through the encoder with the data, because that is where
+    // the amp puts it.
+    const withHeader = concat([Uint8Array.from([total, index, slice.length]), slice])
+    return buildChunk(cmd, sub, seq & 0x7f, enc7(withHeader))
   })
 }
 
@@ -175,24 +172,18 @@ export function encodeBlocks(
   return buildChunks(cmd, sub, payload, options.seq ?? FIXED_SEQ).map(wrapBlock)
 }
 
-function buildChunk(
-  cmd: number,
-  sub: number,
-  seq: number,
-  encoded: Uint8Array,
-  multiHeader: readonly [number, number, number] | null,
-): Uint8Array {
-  const body = multiHeader ? concat([Uint8Array.from(multiHeader), encoded]) : encoded
+function buildChunk(cmd: number, sub: number, seq: number, body: Uint8Array): Uint8Array {
   const chunk = new Uint8Array(CHUNK_HEADER_SIZE + body.length + 1)
   chunk.set(CHUNK_START, 0)
   chunk[2] = seq
+  // The amp computes this: across 234 captured chunks, byte 3 is the exclusive
+  // or of the body every time. So we compute it too, rather than sending the
+  // fixed literal that older clients send and the amp evidently ignores.
   chunk[3] = xorChecksum(body)
   chunk[4] = cmd
   chunk[5] = sub
   chunk.set(body, CHUNK_HEADER_SIZE)
   chunk[chunk.length - 1] = CHUNK_END
-  // Single-chunk commands keep the literal every working client has sent.
-  if (!multiHeader) chunk[3] = FIXED_CHECKSUM
   return chunk
 }
 
@@ -222,7 +213,7 @@ export interface RawChunk {
   body: Uint8Array
 }
 
-/** A chunk's body, split into its optional multi-chunk header and its encoded data. */
+/** A decoded chunk payload, split into its optional multi-chunk header and its data. */
 export interface ChunkData {
   /** Chunk count for this message, or 1 when there is no header. */
   total: number
@@ -230,48 +221,41 @@ export interface ChunkData {
   index: number
   /** Whether a `[total, index, count]` header was actually present. */
   hasHeader: boolean
-  /** The still-encoded data, header removed. */
-  encoded: Uint8Array
+  /** The data, header removed. */
+  data: Uint8Array
 }
 
 /**
- * Separate a chunk body's optional `[total, index, count]` header from its data.
+ * Separate a decoded chunk payload's optional `[total, index, count]` header
+ * from its data.
  *
- * The header's presence on single-chunk messages from the amp is the one part of
- * the layout the size arithmetic cannot settle, so it is detected rather than
+ * Pass this the bytes *after* {@link dec7}, not the raw body. The header lives
+ * inside the encoded region.
+ *
+ * Single-chunk messages carry no header, so its presence is detected rather than
  * assumed — but detected by checking facts, not by decoding twice and keeping
- * whichever attempt did not throw.
+ * whichever attempt did not throw. A header is recognised only when all three
+ * bytes agree with each other and with what follows:
  *
- * A header is recognised only when all three bytes agree with each other and
- * with the length of what follows:
- *
- *  - `total` is at least 1 and no more than 127
+ *  - `total` is at least 2, because a single chunk never carries a header
  *  - `index` is below `total`
- *  - `count` matches the data that follows, measured either raw or encoded
- *    (sources differ on which one it counts, and both readings are accepted)
+ *  - `count` is exactly the number of bytes after the header
  *
- * A plain encoded payload begins with a 7-bit mask byte and its own data, which
- * satisfies all three conditions only by coincidence.
+ * Real single-chunk replies fail this comfortably. The amp's name decodes to
+ * `08 a8 53 70 …`, which would claim eight chunks and be number 168 of them.
  */
-export function splitChunkData(body: Uint8Array): ChunkData {
-  if (body.length > MULTI_HEADER_SIZE) {
-    const total = body[0] as number
-    const index = body[1] as number
-    const count = body[2] as number
-    const encodedLen = body.length - MULTI_HEADER_SIZE
+export function splitChunkData(decoded: Uint8Array): ChunkData {
+  if (decoded.length > MULTI_HEADER_SIZE) {
+    const total = decoded[0] as number
+    const index = decoded[1] as number
+    const count = decoded[2] as number
 
-    const plausible =
-      total >= 1 &&
-      total <= 0x7f &&
-      index < total &&
-      (count === encodedLen || count === dec7Length(encodedLen))
-
-    if (plausible) {
-      return { total, index, hasHeader: true, encoded: body.subarray(MULTI_HEADER_SIZE) }
+    if (total >= 2 && total <= 0x7f && index < total && count === decoded.length - MULTI_HEADER_SIZE) {
+      return { total, index, hasHeader: true, data: decoded.subarray(MULTI_HEADER_SIZE) }
     }
   }
 
-  return { total: 1, index: 0, hasHeader: false, encoded: body }
+  return { total: 1, index: 0, hasHeader: false, data: decoded }
 }
 
 /**

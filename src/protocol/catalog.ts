@@ -13,6 +13,8 @@
  * different things and only one of them should mean the catalogue is incomplete.
  */
 
+import { knobLabelFor } from './knobs.js'
+
 export type SlotKind = 'Gate' | 'Comp' | 'Drive' | 'Amp' | 'Mod' | 'Delay' | 'Reverb'
 
 export interface SlotSpec {
@@ -180,30 +182,18 @@ export function isKnownModel(slot: number, dsp: string): boolean {
 }
 
 /**
- * Knob labels, where they are actually known.
+ * The label for one knob, falling back to its index when nothing names it.
  *
- * Only the amp's five are documented. Every other effect has four to six
- * parameters whose meanings are not recorded reliably anywhere, so they show as
- * P1, P2, … until they are read off the hardware — turn a knob in the official
- * app and watch which index moves in an `03 37` message.
- *
- * The exception is reverb parameter 6, which the protocol notes describe as the
- * reverb *type* encoded as a float rather than as a model swap. Which float
- * means which room is still unmeasured.
+ * The labels themselves live in `knobs.ts`, along with an account of where each
+ * one comes from and how far to trust it.
  */
-const KNOB_LABELS: Record<string, readonly string[]> = {
-  __amp__: ['Gain', 'Treble', 'Mid', 'Bass', 'Master'],
-  'bias.reverb': ['P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'Type'],
+export function knobLabel(slot: number, dsp: string, index: number): string {
+  return knobLabelFor(dsp, index, slot === AMP_SLOT) ?? `P${index + 1}`
 }
 
-export function knobLabel(slot: number, dsp: string, index: number): string {
-  const explicit = KNOB_LABELS[dsp]?.[index]
-  if (explicit) return explicit
-  if (slot === AMP_SLOT) {
-    const amp = KNOB_LABELS['__amp__'] as readonly string[]
-    if (index < amp.length) return amp[index] as string
-  }
-  return `P${index + 1}`
+/** Whether a source actually names this knob, as opposed to us showing its index. */
+export function knobIsNamed(slot: number, dsp: string, index: number): boolean {
+  return knobLabelFor(dsp, index, slot === AMP_SLOT) !== null
 }
 
 /** Hardware preset slots on the amp's front panel. */

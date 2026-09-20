@@ -1,118 +1,144 @@
 # Open questions
 
-Six things this project does not know. Each one has a way to settle it, and each
-one needs bytes from a real Spark 40.
+What this project knows, and what it still does not.
 
-Read this before you change `src/protocol/`. Several of these look settled in
-the code and are not.
+Read this before you change `src/protocol/`. Four questions are now settled from
+bytes captured off a Spark 40, serial S040CD381342. Three of the answers
+contradict the community documentation this project was built from, so if you
+"correct" the code back towards the documentation, `test/hardware.test.ts` fails.
 
 ## How to capture
 
 1. Connect to the amp.
-2. Switch on **Protocol log** and **Raw hex**.
-3. Do the thing you want to record.
-4. Select **Save capture**, and put the file in `test/fixtures/`.
+2. Do the thing you want to record.
+3. Select **Save capture**, and put the file in `test/fixtures/`.
 
-A capture holds every byte in both directions with a timestamp. `ReplayTransport`
-plays one back, so a fixture becomes a test that runs with no amp.
+The recorder writes every byte in both directions with a timestamp, whether or
+not the on-screen log is switched on. To read one back:
 
-Capture these six sessions first: the connect handshake, each of the four
-presets, one knob turned on the amp, one preset button pressed on the amp, one
-effect toggled, and one amp model swapped.
-
-## 1. Where the chunk header sits
-
-Multi-chunk messages prefix each chunk's data with three bytes: `[total, index,
-count]`. Sources disagree on whether those three bytes sit inside or outside the
-7-bit encoded region.
-
-The size limits look like they settle this. They do not. Both layouts land on
-exactly the documented 173-byte ceiling:
-
-```
-outside:  16 + 6 + 3 + enc7(128)     + 1 = 16 + 6 + 3 + 147 + 1 = 173
-inside:   16 + 6     + enc7(128 + 3) + 1 = 16 + 6     + 150 + 1 = 173
+```sh
+npx vite-node tools/analyse-capture.ts -- test/fixtures/<file>.capture.json
 ```
 
-128 and 131 raw bytes both encode into nineteen groups, so the three header bytes
-cost three either way. The arithmetic fixes the chunk size at 128 bytes and tells
-you nothing else.
+## Settled
 
-So this project sends the header raw and outside, because that is what the
-working clients do, and detects it on receive. `splitChunkData` in
-`src/protocol/frame.ts` accepts the header only when all three bytes agree with
-each other and with the length that follows. That is a check rather than the
-prototype's decode-twice-and-keep-what-parses, but it is still a detection.
+### 1. The chunk header sits inside the encoded region
 
-**Settle it:** read one multi-chunk preset from a capture. Count the bytes
-between the chunk header and the `f7`. Replace the detection with a constant.
+Multi-chunk messages prefix each chunk's data with `[total, index, count]`, and
+those three bytes go through the 7-bit encoder with the data. You decode first,
+then read the header. `count` counts decoded bytes.
 
-**Also open:** whether single-chunk messages from the amp carry the header at
-all.
+The size limits look as though they settle this, and they do not. Both layouts
+land on exactly the 173-byte ceiling, because 128 and 131 raw bytes both encode
+into nineteen groups:
 
-## 2. The sequence and checksum bytes
+```
+outside:  16 + 6 + 3 + enc7(128)     + 1 = 173
+inside:   16 + 6     + enc7(128 + 3) + 1 = 173
+```
 
-This project sends the literal `3a 15` for the sequence and checksum on
-single-chunk commands, because working clients have sent exactly that for years.
-Multi-chunk messages use a rolling sequence, which they must, since the sequence
-is what groups the chunks of one message together. Their checksum is the
-exclusive or of the chunk's encoded data bytes.
+The capture settles it. Each chunk of a preset reply decodes to bytes beginning
+`0f 00 19`, `0f 01 19`, `0f 02 19` and so on — fifteen chunks, numbered, each
+declaring 25 bytes, each decoding to exactly 28. The data after the header begins
+`00 00 d9 24`: lead byte, channel 0, a 36-character string. That is how a preset
+starts, and reading the header from the raw body instead produces nothing that
+parses.
 
-The amp is reported not to validate either byte.
+Single-chunk replies carry no header at all.
 
-**Settle it:** send a command with a deliberately wrong checksum and see whether
-the amp acts on it. Then read the sequence and checksum bytes the amp sends on a
-multi-chunk preset, and check the exclusive or against the data.
+### 2. The amp computes the checksum byte
 
-## 3. Write mode and MTU
+Byte 3 of a chunk header is the exclusive or of the chunk body. That holds for
+all 234 chunks in the capture, so this project computes it too rather than
+sending the fixed `15` that older clients send.
+
+**The sequence byte does not group anything.** It is `3a` on everything, in both
+directions, including all fifteen chunks of a preset. `MessageAssembler`
+therefore keys partial messages by command and sub-command. Keying by the
+sequence byte appears to work, because the amp never has two messages of one kind
+in flight, but it is keying on a constant.
+
+### 3. The preset checksum is a plain sum
+
+Every byte after the channel, summed modulo 256. The community rule adds a clause
+substituting `0xCC` for any byte above 127; that clause is wrong on this
+firmware. The two rules genuinely differ, since a preset is full of bytes above
+127 such as the `d9` and `ca` type tags, and the plain sum reproduces the stored
+byte on all five distinct presets while the `0xCC` variant reproduces none.
+
+### 4. The live state has its own lead byte
+
+A reply about a stored preset starts `00`. A reply to a live-state request starts
+`01`, and then carries the channel of the slot the sound came from rather than
+the `7f` the notes describe. Both forms parse; `Preset.live` records which.
+
+## Still open
+
+### 5. What each knob does
+
+`src/protocol/knobs.ts` now carries labels for every effect, taken from two
+independent client implementations that were read directly and that agree with
+each other on almost every entry.
+
+**The parameter counts are verified; the names are not.** The counts in the
+capture match those catalogues exactly — one parameter on `Booster`, two on
+`Compressor`, `Phaser` and `Cloner`, three on `Flanger` and the noise gate, four
+on `ChorusAnalog`, five on `DelayMono` and every amp, eight on `bias.reverb`.
+That is real corroboration, and it is not the same as confirming that a knob is
+called "Sensitivity". No capture can tell you a name.
+
+Seven parameters have no name in any source and show as `P4` and so on. They are
+left blank on purpose.
+
+**Settle it:** open the official app, turn one knob, and watch which index moves
+in an `03 37` message. This needs a second Bluetooth client, because the control
+link takes one at a time.
+
+**Also unexplained:** `DistortionTS9` appears with three parameters in one preset
+and four in another, and `bias.reverb` with seven in one and eight in another.
+Nothing accounts for that yet.
+
+### 6. The reverb rooms
+
+Parameter index 6 selects the room as a float. The nine values are confirmed by
+two implementations that arrive at them independently, and are in
+`REVERB_ROOMS`. Three of the *names* differ between sources, and both
+alternatives are recorded rather than adjudicated.
+
+There is no spring reverb, despite the protocol notes saying "hall, plate,
+spring". That phrase is prose, not a list.
+
+**Settle it:** change the room in the official app and record the float.
+
+### 7. Write mode and MTU
 
 `BleTransport` prefers `writeValueWithoutResponse` and falls back to
-`writeValue` when Chrome rejects the write. A preset upload produces blocks near
-the 173-byte ceiling, and Chrome may fragment them.
+`writeValue`. A preset upload produces blocks near the 173-byte ceiling, and
+Chrome may fragment them. No preset has been uploaded to real hardware yet.
 
-**Settle it:** upload a preset over Bluetooth and watch whether the amp accepts
-it. If it does not, try acknowledged writes only, then try splitting each block
-across several writes.
+**Settle it:** upload a preset over Bluetooth and see whether the amp takes it.
 
-## 4. The minimum gap between commands
+### 8. The minimum gap between commands
 
-Community guidance says 500 ms between commands. That is far too slow for a
-slider drag, so `src/protocol/commands.ts` uses 45 ms for parameters and up to
-400 ms for preset queries — roughly a tenth of the guidance.
+Community guidance says 500 ms. This project uses 45 ms for parameter changes and
+up to 400 ms for preset queries. Those numbers are not measured; they are what
+the prototype used without apparent trouble.
 
-These numbers are not measured. They are what the prototype used without
-apparent trouble.
+**Settle it:** bisect with `gapScale` on `AmpController`, and record the number
+where it breaks rather than one that works.
 
-**Settle it:** bisect. Raise `gapScale` on `AmpController` if the amp turns
-flaky, and lower it until it does. Record the number where it breaks, not the
-number that works.
+### 9. A stray byte in the serial number
 
-## 5. What each knob does
-
-Only the amp's five knobs are documented: gain, treble, mid, bass, master. Every
-other effect has four to six parameters, and nothing records what they mean.
-
-`knobLabel` in `src/protocol/catalog.ts` shows `P1`, `P2` and so on for all of
-them, which is honest and useless.
-
-**Settle it:** open the official app, turn one knob, and watch which parameter
-index moves in an `03 37` message. Repeat for each effect. Dump every preset
-first to learn how many parameters each model has.
-
-## 6. The reverb type
-
-Reverb is always `bias.reverb`. The room — hall, plate, spring and the rest — is
-a float in parameter index 6 rather than a model swap. Which float means which
-room is unmeasured.
-
-**Settle it:** change the reverb type in the official app and record the float
-at index 6 for each one. There are a small number of discrete values.
+The serial number reply decodes to a prefixed string of length 13 whose
+thirteenth byte is `f7` — the chunk terminator, encoded, inside the string. The
+serial itself is twelve characters. Either the amp includes the terminator in the
+length, or the framing is off by one in a way that happens not to matter. It
+parses, and the extra character is cosmetic, so it is recorded rather than fixed.
 
 ## What captures cannot tell you
 
-A capture records one firmware version on one amp. It proves that the amp
-answered these bytes this way, on this day. It does not prove that a different
-Spark, or the same Spark after an update, answers the same way.
+A capture records one firmware version on one amp, on one day. It does not prove
+a different Spark, or the same Spark after an update, behaves the same way.
 
 That is a good reason to keep `src/protocol/` isolated: when a firmware update
-changes something, the fix stays inside one directory.
+changes something, the fix stays in one directory.
